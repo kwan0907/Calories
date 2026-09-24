@@ -1,7 +1,7 @@
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const API=(window.CRAB_API_BASE||"").replace(/\/+$/,"");
 const S={user:null,settings:{business_name:"蟹帳 POS",currency:"HKD",default_delivery_cost_cents:"0",customer_delivery_fee_cents:"0",free_shipping_threshold_cents:"0",free_shipping_basis:"discounted"},products:[]};
-let VIEW_ID=0,ROUTE_CONTROLLER=null,HIDDEN_AT=0,REFRESH_TIMER=0;
+let VIEW_ID=0,ROUTE_CONTROLLER=null,HIDDEN_AT=0,REFRESH_TIMER=0,WARM_TIMER=0,WARMED_AT=0;
 const API_CACHE=new Map(),API_INFLIGHT=new Map(),MUTATION_LOCKS=new Map();
 const CACHE_TTL=15000;
 const alive=view=>view===VIEW_ID&&!!$("#content");
@@ -28,15 +28,31 @@ function scheduleRouteRefresh(path){
   clearTimeout(REFRESH_TIMER);REFRESH_TIMER=setTimeout(()=>{if(S.user&&!$("#modal"))route()},80)
 }
 function invalidateAfterMutation(path){
-  const prefixes=path.startsWith("/api/orders")?["/api/orders","/api/dashboard","/api/reports","/api/customers","/api/products"]:
-    path.startsWith("/api/products")?["/api/products","/api/dashboard","/api/reports"]:
-    path.startsWith("/api/customers")?["/api/customers","/api/orders"]:
-    path.startsWith("/api/expenses")?["/api/expenses","/api/dashboard","/api/reports"]:
-    path.startsWith("/api/investors")?["/api/investors","/api/reports","/api/users"]:
-    path.startsWith("/api/users")?["/api/users","/api/investors"]:
-    path.startsWith("/api/settings")?["/api/settings","/api/dashboard"]:
-    [];
-  markCacheStale(k=>prefixes.some(p=>k.startsWith(p)))
+  let direct=[],related=[];
+  if(path.startsWith("/api/orders")){direct=["/api/orders"];related=["/api/dashboard","/api/reports","/api/customers","/api/products"]}
+  else if(path.startsWith("/api/products")){direct=["/api/products"];related=["/api/dashboard","/api/reports"]}
+  else if(path.startsWith("/api/customers")){direct=["/api/customers"];related=["/api/orders"]}
+  else if(path.startsWith("/api/expenses")){direct=["/api/expenses"];related=["/api/dashboard","/api/reports"]}
+  else if(path.startsWith("/api/investors")){direct=["/api/investors"];related=["/api/reports","/api/users"]}
+  else if(path.startsWith("/api/users")){direct=["/api/users"];related=["/api/investors"]}
+  else if(path.startsWith("/api/settings")){direct=["/api/settings"];related=["/api/dashboard"]}
+  clearCache(k=>direct.some(p=>k.startsWith(p)));
+  markCacheStale(k=>related.some(p=>k.startsWith(p)))
+}
+function warmCommonData(){
+  if(!S.user||Date.now()-WARMED_AT<30000)return;
+  clearTimeout(WARM_TIMER);WARM_TIMER=setTimeout(()=>{
+    if(!S.user||document.visibilityState!=="visible")return;
+    WARMED_AT=Date.now();
+    const paths=[];
+    if(has("dashboard"))paths.push("/api/dashboard?today="+today());
+    if(has("products.read"))paths.push("/api/products");
+    if(has("orders.read"))paths.push("/api/orders?");
+    if(has("customers.read"))paths.push("/api/customers?q=");
+    if(has("investors.read"))paths.push("/api/investors");
+    const run=()=>Promise.allSettled(paths.map(p=>req(p,{noAbort:true}).catch(()=>null)));
+    if("requestIdleCallback"in window)requestIdleCallback(run,{timeout:1400});else setTimeout(run,180)
+  },250)
 }
 function isAbortError(e){return e?.name==="AbortError"||String(e?.message||"").toLowerCase().includes("abort")}
 function skeletonHtml(){return '<div class="app-skeleton"><div class="sk sk-title"></div><div class="sk sk-sub"></div><div class="sk-grid"><div class="sk sk-card"></div><div class="sk sk-card"></div><div class="sk sk-card"></div><div class="sk sk-card"></div></div></div>'}
@@ -171,7 +187,8 @@ function shell(){
   const closeMoreNav=()=>{const s=$("#moreSheet");if(s)s.hidden=true;document.body.classList.remove("nav-sheet-open")};
   $("#moreNav").onclick=openMore;$("#closeMore").onclick=closeMoreNav;$("#moreBackdrop").onclick=closeMoreNav;
   const logout=async()=>{try{await req("/api/auth/logout",{method:"POST"})}catch{}S.user=null;login()};
-  $("#logout").onclick=logout;$("#mobileLogout").onclick=logout
+  $("#logout").onclick=logout;$("#mobileLogout").onclick=logout;
+  warmCommonData()
 }
 function route(){
   ROUTE_CONTROLLER?.abort();ROUTE_CONTROLLER=new AbortController();API_INFLIGHT.clear();
