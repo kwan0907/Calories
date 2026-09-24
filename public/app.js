@@ -1,9 +1,45 @@
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const API=(window.CRAB_API_BASE||"").replace(/\/+$/,"");
 const S={user:null,settings:{business_name:"蟹帳 POS",currency:"HKD",default_delivery_cost_cents:"0",customer_delivery_fee_cents:"0",free_shipping_threshold_cents:"0",free_shipping_basis:"discounted"},products:[]};
-let VIEW_ID=0;
+let VIEW_ID=0,ROUTE_CONTROLLER=null,HIDDEN_AT=0,REFRESH_TIMER=0;
+const API_CACHE=new Map(),API_INFLIGHT=new Map(),MUTATION_LOCKS=new Map();
+const CACHE_TTL=15000;
 const alive=view=>view===VIEW_ID&&!!$("#content");
+const currentRouteName=()=>((location.hash||"#/dashboard").replace(/^#\//,"").split("?")[0]||"dashboard");
 function navigate(r){const h="#/"+r;if(location.hash===h)route();else location.hash=h}
+function cacheKey(path){return path}
+function markCacheStale(test=()=>true){for(const [k,v] of API_CACHE)if(test(k,v))v.ts=0}
+function clearCache(test=()=>true){for(const k of [...API_CACHE.keys()])if(test(k,API_CACHE.get(k)))API_CACHE.delete(k)}
+function cacheRouteMatch(path,r){
+  if(path.startsWith("/api/dashboard"))return r==="dashboard";
+  if(path.startsWith("/api/orders"))return r==="orders"||r==="delivery";
+  if(path.startsWith("/api/customers"))return r==="customers";
+  if(path.startsWith("/api/products"))return r==="products";
+  if(path.startsWith("/api/reports"))return r==="reports";
+  if(path.startsWith("/api/expenses"))return r==="expenses";
+  if(path.startsWith("/api/investors"))return r==="investors"||r==="users";
+  if(path.startsWith("/api/users"))return r==="users";
+  if(path.startsWith("/api/audit"))return r==="audit";
+  if(path.startsWith("/api/settings"))return r==="settings";
+  return false
+}
+function scheduleRouteRefresh(path){
+  if(!S.user||document.visibilityState!=="visible"||$("#modal")||!cacheRouteMatch(path,currentRouteName()))return;
+  clearTimeout(REFRESH_TIMER);REFRESH_TIMER=setTimeout(()=>{if(S.user&&!$("#modal"))route()},80)
+}
+function invalidateAfterMutation(path){
+  const prefixes=path.startsWith("/api/orders")?["/api/orders","/api/dashboard","/api/reports","/api/customers","/api/products"]:
+    path.startsWith("/api/products")?["/api/products","/api/dashboard","/api/reports"]:
+    path.startsWith("/api/customers")?["/api/customers","/api/orders"]:
+    path.startsWith("/api/expenses")?["/api/expenses","/api/dashboard","/api/reports"]:
+    path.startsWith("/api/investors")?["/api/investors","/api/reports","/api/users"]:
+    path.startsWith("/api/users")?["/api/users","/api/investors"]:
+    path.startsWith("/api/settings")?["/api/settings","/api/dashboard"]:
+    [];
+  markCacheStale(k=>prefixes.some(p=>k.startsWith(p)))
+}
+function isAbortError(e){return e?.name==="AbortError"||String(e?.message||"").toLowerCase().includes("abort")}
+function skeletonHtml(){return '<div class="app-skeleton"><div class="sk sk-title"></div><div class="sk sk-sub"></div><div class="sk-grid"><div class="sk sk-card"></div><div class="sk sk-card"></div><div class="sk sk-card"></div><div class="sk sk-card"></div></div></div>'}
 const ROLE_LABELS={admin:"管理員",staff:"員工",investor:"投資者",viewer:"只讀",customer:"客戶"};
 const ROLE_DEFAULTS={
   admin:["*"],
@@ -32,13 +68,48 @@ const PERM_GRANTS={
 
 document.addEventListener("DOMContentLoaded",boot);
 window.addEventListener("hashchange",()=>S.user&&route());
+window.addEventListener("pageshow",e=>{if(e.persisted&&S.user){markCacheStale();route()}});
+document.addEventListener("visibilitychange",()=>{
+  if(document.hidden){HIDDEN_AT=Date.now();return}
+  if(S.user&&Date.now()-HIDDEN_AT>30000){markCacheStale();route()}
+});
 
 async function req(path,opt={}){
-  const init={method:opt.method||"GET",headers:{},credentials:"include"};
-  if(opt.body!==undefined){init.headers["content-type"]="application/json";init.body=JSON.stringify(opt.body)}
-  const r=await fetch(API+path,init),ct=r.headers.get("content-type")||"",d=ct.includes("json")?await r.json():await r.text();
-  if(!r.ok){if(r.status===401&&!opt.noRedirect){S.user=null;login()}throw Error(d?.message||d?.error||("HTTP "+r.status))}
-  return d;
+  const method=String(opt.method||"GET").toUpperCase(),isGet=method==="GET",key=cacheKey(path),useCache=isGet&&opt.cache!==false&&!path.startsWith("/api/auth/")&&!path.startsWith("/api/setup");
+  const fetchOnce=async()=>{
+    const init={method,headers:{},credentials:"include"};
+    if(opt.body!==undefined){init.headers["content-type"]="application/json";init.body=JSON.stringify(opt.body)}
+    if(isGet&&!opt.noAbort&&ROUTE_CONTROLLER)init.signal=ROUTE_CONTROLLER.signal;
+    const r=await fetch(API+path,init),ct=r.headers.get("content-type")||"",d=ct.includes("json")?await r.json():await r.text();
+    if(!r.ok){if(r.status===401&&!opt.noRedirect){S.user=null;clearCache();login()}throw Error(d?.message||d?.error||("HTTP "+r.status))}
+    return d
+  };
+  if(isGet){
+    if(useCache&&!opt.fresh){
+      const hit=API_CACHE.get(key);
+      if(hit){
+        const age=Date.now()-hit.ts;
+        if(age<CACHE_TTL)return hit.data;
+        if(!API_INFLIGHT.has(key)){
+          const bg=fetchOnce().then(d=>{
+            const before=JSON.stringify(hit.data),after=JSON.stringify(d);
+            API_CACHE.set(key,{data:d,ts:Date.now()});
+            if(before!==after)scheduleRouteRefresh(path);
+            return d
+          }).catch(e=>{if(!isAbortError(e))console.warn("SWR refresh failed",path,e)}).finally(()=>API_INFLIGHT.delete(key));
+          API_INFLIGHT.set(key,bg)
+        }
+        return hit.data
+      }
+    }
+    if(API_INFLIGHT.has(key))return API_INFLIGHT.get(key);
+    const p=fetchOnce().then(d=>{if(useCache)API_CACHE.set(key,{data:d,ts:Date.now()});return d}).finally(()=>API_INFLIGHT.delete(key));
+    API_INFLIGHT.set(key,p);return p
+  }
+  const lockKey=opt.lockKey||method+":"+path;
+  if(MUTATION_LOCKS.has(lockKey))return MUTATION_LOCKS.get(lockKey);
+  const p=fetchOnce().then(d=>{invalidateAfterMutation(path);return d}).finally(()=>MUTATION_LOCKS.delete(lockKey));
+  MUTATION_LOCKS.set(lockKey,p);return p
 }
 async function boot(){
   try{const x=await req("/api/setup/status",{noRedirect:true});if(x.needs_setup)return setup();
