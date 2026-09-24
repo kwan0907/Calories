@@ -168,11 +168,11 @@ async function reports(){
 }
 async function users(){
   if(!has("accounts.manage"))return location.hash="#/"+homeRoute();const [u,i]=await Promise.all([req("/api/users"),req("/api/investors")]),all=u.users||[],pending=all.filter(x=>x.account_status==="pending"),active=all.filter(x=>x.account_status==="active"),rejected=all.filter(x=>x.account_status==="rejected");
-  const rows=list=>table(["名稱","Email","身分","投資者","狀態",""],list.map(x=>[esc(x.name),esc(x.email),ROLE_LABELS[x.access_role]||esc(x.access_role||"-"),esc(x.investor_name||"-"),accountBadge(x.account_status,x.is_active),`<button class="btn small ue" data-id="${x.id}">${x.account_status==="pending"?"審批":"設定"}</button>`]));
-  $("#content").innerHTML=head("帳戶",`待審批 ${pending.length} 個；由管理員設定身分及權限`,'<button id=add class="btn primary">＋ 帳戶</button>')+
-    `<div class="account-tabs"><button class="tab active" data-tab="pending">待審批 (${pending.length})</button><button class="tab" data-tab="active">已啟用 (${active.length})</button><button class="tab" data-tab="rejected">已拒絕 (${rejected.length})</button></div>
-    <div id="userList" class="card">${rows(pending)}</div>`;
-  const data={pending,active,rejected};[...document.querySelectorAll(".tab")].forEach(b=>b.onclick=()=>{[...document.querySelectorAll(".tab")].forEach(x=>x.classList.toggle("active",x===b));$("#userList").innerHTML=rows(data[b.dataset.tab]);bind()});
+  const rows=list=>table(["名稱","Email","身分","投資者","狀態","申請時間",""],list.map(x=>[esc(x.name),esc(x.email),ROLE_LABELS[x.access_role]||esc(x.access_role||"-"),esc(x.investor_name||"-"),accountBadge(x.account_status,x.is_active),esc(x.requested_at||x.created_at||"-"),`<button class="btn small ue" data-id="${x.id}">${x.account_status==="pending"?"審批":"設定"}</button>`]));
+  $("#content").innerHTML=head("帳戶",`全部 ${all.length} 個；待審批 ${pending.length} 個`,'<button id=add class="btn primary">＋ 帳戶</button>')+
+    `<div class="account-tabs"><button class="tab active" data-tab="all">全部 (${all.length})</button><button class="tab" data-tab="pending">待審批 (${pending.length})</button><button class="tab" data-tab="active">已啟用 (${active.length})</button><button class="tab" data-tab="rejected">已拒絕 (${rejected.length})</button></div>
+    <div id="userList" class="card">${rows(all)}</div>`;
+  const data={all,pending,active,rejected};[...document.querySelectorAll(".tab")].forEach(b=>b.onclick=()=>{[...document.querySelectorAll(".tab")].forEach(x=>x.classList.toggle("active",x===b));$("#userList").innerHTML=rows(data[b.dataset.tab]);bind()});
   const bind=()=>[...document.querySelectorAll(".ue")].forEach(b=>b.onclick=()=>manageUserModal(all.find(x=>x.id===b.dataset.id),i.investors||[],()=>users()));
   bind();$("#add").onclick=()=>userModal(i.investors||[],()=>users())
 }
