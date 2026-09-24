@@ -346,7 +346,7 @@ async function saveOrder(env,user,b,id){
       const match=await env.DB.prepare("SELECT * FROM customers WHERE phone=? AND phone<>'' ORDER BY updated_at DESC LIMIT 1").bind(incoming.phone).first();
       current=match||null; cid=match?.id||null;
     }
-    const isWalkIn=!cid&&!incoming.phone&&!incoming.address&&(incoming.name==="散客"||!incoming.name);
+    const isWalkIn=!incoming.phone&&!incoming.address&&(incoming.name==="散客"||!incoming.name);
     if(!isWalkIn){
       if(current){
         const x={
