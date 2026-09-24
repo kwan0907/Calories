@@ -2,6 +2,12 @@
   publish = "public"
 
 [[redirects]]
+  from = "/api/*"
+  to = "https://crab-pos.yimwingkwan0907.workers.dev/api/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
