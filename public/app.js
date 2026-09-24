@@ -1,12 +1,33 @@
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const API=(window.CRAB_API_BASE||"").replace(/\/+$/,"");
 const S={user:null,settings:{business_name:"蟹帳 POS",currency:"HKD",default_delivery_cost_cents:"0",customer_delivery_fee_cents:"0",free_shipping_threshold_cents:"0",free_shipping_basis:"discounted"},products:[]};
-let VIEW_ID=0,ROUTE_CONTROLLER=null,HIDDEN_AT=0,REFRESH_TIMER=0,WARM_TIMER=0,WARMED_AT=0;
-const API_CACHE=new Map(),API_INFLIGHT=new Map(),MUTATION_LOCKS=new Map();
-const CACHE_TTL=15000;
+let VIEW_ID=0,ROUTE_CONTROLLER=null,HIDDEN_AT=0,REFRESH_TIMER=0,WARM_TIMER=0,WARMED_AT=0,LAST_HASH=location.hash||"#/dashboard",PENDING_TOP=false;
+const API_CACHE=new Map(),API_INFLIGHT=new Map(),MUTATION_LOCKS=new Map(),SCROLL_POS=new Map();
+const CACHE_TTL=15000,REQUEST_TIMEOUT=15000;
+if("scrollRestoration" in history)history.scrollRestoration="manual";
 const alive=view=>view===VIEW_ID&&!!$("#content");
 const currentRouteName=()=>((location.hash||"#/dashboard").replace(/^#\//,"").split("?")[0]||"dashboard");
-function navigate(r){const h="#/"+r;if(location.hash===h)route();else location.hash=h}
+function navigate(r,opt={}){PENDING_TOP=opt.top!==false;const h="#/"+r;if(location.hash===h)route();else location.hash=h}
+function setNetworkState(online=navigator.onLine){
+  document.documentElement.classList.toggle("is-offline",!online);
+  const el=$("#netState");if(!el)return;
+  el.hidden=!!online;el.textContent=online?"":"網絡已中斷｜正在使用已載入資料";
+}
+function prefetchRoute(r){
+  if(!S.user||document.visibilityState!=="visible"||!navigator.onLine)return;
+  const paths=[];
+  if(r==="dashboard"&&has("dashboard"))paths.push("/api/dashboard?today="+today());
+  if((r==="orders"||r==="delivery")&&has("orders.read"))paths.push(r==="delivery"?"/api/orders?delivery_from="+today():"/api/orders?");
+  if(r==="customers"&&has("customers.read"))paths.push("/api/customers?q=");
+  if(r==="products"&&has("products.read"))paths.push("/api/products");
+  if(r==="expenses"&&has("expenses.read"))paths.push("/api/expenses?from="+today().slice(0,7)+"-01&to="+today());
+  if(r==="investors"&&has("investors.read"))paths.push("/api/investors");
+  if(r==="users"&&has("accounts.manage"))paths.push("/api/users","/api/investors");
+  if(r==="audit"&&has("audit.read"))paths.push("/api/audit");
+  if(r==="settings"&&has("settings.read"))paths.push("/api/settings");
+  if(r==="reports"&&has("reports.read"))paths.push("/api/reports/summary?from="+today().slice(0,7)+"-01&to="+today());
+  paths.forEach(p=>req(p,{noAbort:true}).catch(()=>null))
+}
 function cacheKey(path){return path}
 function markCacheStale(test=()=>true){for(const [k,v] of API_CACHE)if(test(k,v))v.ts=0}
 function clearCache(test=()=>true){for(const k of [...API_CACHE.keys()])if(test(k,API_CACHE.get(k)))API_CACHE.delete(k)}
@@ -84,21 +105,32 @@ const PERM_GRANTS={
 
 document.addEventListener("DOMContentLoaded",boot);
 window.addEventListener("hashchange",()=>S.user&&route());
-window.addEventListener("pageshow",e=>{if(e.persisted&&S.user){markCacheStale();route()}});
+window.addEventListener("online",()=>{setNetworkState(true);markCacheStale();if(S.user){warmCommonData();route()}toast("網絡已恢復","success")});
+window.addEventListener("offline",()=>{setNetworkState(false);toast("目前離線，已載入資料仍可查看","error")});
+window.addEventListener("pageshow",e=>{setNetworkState();if(e.persisted&&S.user){markCacheStale();route()}});
 document.addEventListener("visibilitychange",()=>{
   if(document.hidden){HIDDEN_AT=Date.now();return}
-  if(S.user&&Date.now()-HIDDEN_AT>30000){markCacheStale();route()}
+  setNetworkState();
+  if(S.user&&Date.now()-HIDDEN_AT>20000){markCacheStale();warmCommonData();route()}
 });
 
 async function req(path,opt={}){
   const method=String(opt.method||"GET").toUpperCase(),isGet=method==="GET",key=cacheKey(path),useCache=isGet&&opt.cache!==false&&!path.startsWith("/api/auth/")&&!path.startsWith("/api/setup");
   const fetchOnce=async()=>{
-    const init={method,headers:{},credentials:"include"};
+    const init={method,headers:{},credentials:"include"},ctrl=new AbortController();let timedOut=false;
     if(opt.body!==undefined){init.headers["content-type"]="application/json";init.body=JSON.stringify(opt.body)}
-    if(isGet&&!opt.noAbort&&ROUTE_CONTROLLER)init.signal=ROUTE_CONTROLLER.signal;
-    const r=await fetch(API+path,init),ct=r.headers.get("content-type")||"",d=ct.includes("json")?await r.json():await r.text();
-    if(!r.ok){if(r.status===401&&!opt.noRedirect){S.user=null;clearCache();login()}throw Error(d?.message||d?.error||("HTTP "+r.status))}
-    return d
+    const routeSignal=isGet&&!opt.noAbort?ROUTE_CONTROLLER?.signal:null;
+    if(routeSignal){if(routeSignal.aborted)ctrl.abort();else routeSignal.addEventListener("abort",()=>ctrl.abort(),{once:true})}
+    const timer=setTimeout(()=>{timedOut=true;ctrl.abort()},opt.timeout||REQUEST_TIMEOUT);init.signal=ctrl.signal;
+    try{
+      const r=await fetch(API+path,init),ct=r.headers.get("content-type")||"",d=ct.includes("json")?await r.json():await r.text();
+      if(!r.ok){if(r.status===401&&!opt.noRedirect){S.user=null;clearCache();login()}throw Error(d?.message||d?.error||("HTTP "+r.status))}
+      return d
+    }catch(e){
+      if(timedOut)throw Error("網絡回應較慢，請再試一次");
+      if(!navigator.onLine&&!isAbortError(e))throw Error("目前離線，請檢查網絡後再試");
+      throw e
+    }finally{clearTimeout(timer)}
   };
   if(isGet){
     if(useCache&&!opt.fresh){
@@ -174,6 +206,7 @@ function shell(){
       <nav class="nav">${nav.map(x=>`<button data-r="${x[0]}"><span>${x[1]}</span>${x[2]}</button>`).join("")}</nav>
     </aside>
     <main class="main">
+      <div id="netState" class="net-state" hidden></div>
       <header class="topbar"><div class="top-title">${esc(S.settings.business_name||"蟹帳 POS")}</div><div class="user-box"><span class="name">${esc(S.user.name)}</span><span class="role">${ROLE_LABELS[roleOf()]||esc(roleOf())}</span><button id="logout" class="btn small ghost">登出</button></div></header>
       <header class="mobile-head"><div class="mobile-brand"><div class="brand-mark">蟹</div><div class="mobile-brand-text"><b>${esc(S.settings.business_name||"蟹帳 POS")}</b><span>${esc(S.user.name)} · ${ROLE_LABELS[roleOf()]||esc(roleOf())}</span></div></div><button id="mobileLogout" class="btn small ghost">登出</button></header>
       <section id="content" class="content"></section>
@@ -182,18 +215,23 @@ function shell(){
     <div id="moreSheet" class="more-sheet" hidden><button id="moreBackdrop" class="more-backdrop" aria-label="關閉"></button><div class="more-panel"><div class="more-handle"></div><div class="more-head"><b>全部功能</b><button id="closeMore" class="btn small">×</button></div><div class="more-grid">${nav.map(x=>`<button data-r="${x[0]}"><span>${x[1]}</span><b>${x[2]}</b></button>`).join("")}</div></div></div>
   </div>`;
   const go=b=>{navigate(b.dataset.r);closeMoreNav()};
-  [...document.querySelectorAll(".nav button,.mobile-nav button[data-r],.more-grid button[data-r]")].forEach(b=>b.onclick=()=>go(b));
+  [...document.querySelectorAll(".nav button,.mobile-nav button[data-r],.more-grid button[data-r]")].forEach(b=>{
+    b.onclick=()=>go(b);b.addEventListener("pointerdown",()=>prefetchRoute(b.dataset.r),{passive:true})
+  });
   const openMore=()=>{$("#moreSheet").hidden=false;document.body.classList.add("nav-sheet-open")};
   const closeMoreNav=()=>{const s=$("#moreSheet");if(s)s.hidden=true;document.body.classList.remove("nav-sheet-open")};
   $("#moreNav").onclick=openMore;$("#closeMore").onclick=closeMoreNav;$("#moreBackdrop").onclick=closeMoreNav;
   const logout=async()=>{try{await req("/api/auth/logout",{method:"POST"})}catch{}S.user=null;login()};
   $("#logout").onclick=logout;$("#mobileLogout").onclick=logout;
-  warmCommonData()
+  setNetworkState();warmCommonData()
 }
 function route(){
   ROUTE_CONTROLLER?.abort();ROUTE_CONTROLLER=new AbortController();API_INFLIGHT.clear();
   if($("#modal"))closeModal();
-  const view=++VIEW_ID,raw=(location.hash||"#/dashboard").replace(/^#\//,""),[r,q=""]=raw.split("?"),p=new URLSearchParams(q),content=$("#content"),before=content?.innerHTML||"";
+  const nextHash=location.hash||"#/dashboard",currentY=window.scrollY||0,sameHash=nextHash===LAST_HASH;
+  if(!sameHash&&LAST_HASH)SCROLL_POS.set(LAST_HASH,currentY);
+  const restoreY=sameHash?currentY:(PENDING_TOP?0:(SCROLL_POS.get(nextHash)||0));PENDING_TOP=false;LAST_HASH=nextHash;
+  const view=++VIEW_ID,raw=nextHash.replace(/^#\//,""),[r,q=""]=raw.split("?"),p=new URLSearchParams(q),content=$("#content"),before=content?.innerHTML||"";
   [...document.querySelectorAll(".nav button,.mobile-nav button[data-r],.more-grid button[data-r]")].forEach(b=>b.classList.toggle("active",b.dataset.r===r));
   $("#moreNav")?.classList.toggle("active",![...document.querySelectorAll(".mobile-nav button[data-r]")].some(b=>b.dataset.r===r));
   content?.classList.add("route-switching");
@@ -204,7 +242,7 @@ function route(){
     users:()=>users(view),audit:()=>audit(view),settings:()=>settings(view),noaccess:()=>noaccess(view),
     pos:()=>pos(p.get("edit"),view)
   };
-  Promise.resolve((map[r]||map.noaccess)()).then(()=>{if(view===VIEW_ID){clearTimeout(sk);content?.classList.remove("route-switching");content?.classList.add("view-enter");setTimeout(()=>content?.classList.remove("view-enter"),180)}}).catch(e=>{clearTimeout(sk);if(view!==VIEW_ID||isAbortError(e))return;content?.classList.remove("route-switching");toast(e.message,"error");if(content)content.innerHTML=`<div class="empty">${esc(e.message)}</div>`})
+  Promise.resolve((map[r]||map.noaccess)()).then(()=>{if(view===VIEW_ID){clearTimeout(sk);content?.classList.remove("route-switching");content?.classList.add("view-enter");requestAnimationFrame(()=>window.scrollTo({top:restoreY,left:0,behavior:"auto"}));setTimeout(()=>content?.classList.remove("view-enter"),180)}}).catch(e=>{clearTimeout(sk);if(view!==VIEW_ID||isAbortError(e))return;content?.classList.remove("route-switching");toast(e.message,"error");if(content)content.innerHTML=`<div class="empty error-state"><b>暫時載入不到</b><span>${esc(e.message)}</span><button id="retryRoute" class="btn">重新載入</button></div>`;$("#retryRoute")?.addEventListener("click",()=>route())})
 }
 async function noaccess(view=VIEW_ID){if(!alive(view))return;
   $("#content").innerHTML=head("帳戶已啟用","目前未獲分配任何功能權限")+"<div class=empty>請聯絡管理員設定身分或權限。</div>";
