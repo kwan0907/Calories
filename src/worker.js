@@ -124,7 +124,8 @@ async function api(req,env,u){
     const r=await env.DB.prepare(`SELECT c.*,COUNT(o.id) order_count,COALESCE(SUM(CASE WHEN o.status!='cancelled' THEN o.total_cents ELSE 0 END),0) lifetime_value_cents
       FROM customers c LEFT JOIN orders o ON o.customer_id=c.id WHERE (?='' OR c.name LIKE ? OR c.phone LIKE ?)
       GROUP BY c.id ORDER BY c.updated_at DESC LIMIT 200`).bind(q,like,like).all();
-    return j({ok:true,customers:r.results||[]});
+    let customers=r.results||[]; if(!can(user,"customers.pii")) customers=customers.map(x=>({...x,phone:"",address:""}));
+    return j({ok:true,customers});
   }
   if(p==="/api/customers"&&m==="POST"){
     need(user,"customers.write"); const x=customer(await body(req)),id=crypto.randomUUID();
@@ -153,6 +154,7 @@ async function api(req,env,u){
   if(p==="/api/orders"&&m==="POST"){need(user,"orders.write");return j(await saveOrder(env,user,await body(req),null),201)}
   mm=p.match(/^\/api\/orders\/([^/]+)$/);
   if(mm&&m==="GET"){
+    need(user,"orders.read");
     const pii=can(user,"customers.pii")?",c.name customer_name,c.phone customer_phone,c.address customer_address":"";
     const o=await env.DB.prepare(`SELECT o.* ${pii} FROM orders o LEFT JOIN customers c ON c.id=o.customer_id WHERE o.id=?`).bind(mm[1]).first(); if(!o)return nf();
     const items=await env.DB.prepare("SELECT * FROM order_items WHERE order_id=?").bind(mm[1]).all(); return j({ok:true,order:o,items:items.results||[]});
