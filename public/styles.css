@@ -79,3 +79,7 @@ textarea{min-height:92px;resize:vertical}
   .modal-savebar .btn{width:100%;min-height:50px}
   .form-status{text-align:center;min-height:18px}
 }
+
+.line-row.no-cost{grid-template-columns:2fr .65fr 1fr 40px}
+@media(max-width:760px){.line-row.no-cost{grid-template-columns:1.7fr .65fr 1fr 40px}}
+@media(max-width:420px){.line-row.no-cost{grid-template-columns:1fr 70px}.line-row.no-cost .price-col{grid-column:span 1}.line-row.no-cost .remove{grid-column:2;grid-row:1}}
