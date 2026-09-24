@@ -173,12 +173,12 @@ async function pos(id){
   const inferShipMode=()=>{if(!id)return"auto";const sub=currentSub(),disc=Math.round(sub*currentOff/100),base=freeBasis==="subtotal"?sub:Math.max(0,sub-disc),autoFee=freeThreshold>0&&base>=freeThreshold?0:standardFee,existing=+o.delivery_fee_cents||0;if(existing===autoFee)return"auto";if(existing===0)return"free";return"custom"};
   let shippingMode=inferShipMode();
   const syncDiscountUI=()=>{
-    $(".discount-pill").forEach(b=>b.classList.toggle("active",b.dataset.off==="custom"?customDiscountMode:(!customDiscountMode&&+b.dataset.off===currentOff)));
+    $$(".discount-pill").forEach(b=>b.classList.toggle("active",b.dataset.off==="custom"?customDiscountMode:(!customDiscountMode&&+b.dataset.off===currentOff)));
     $("#customDiscountWrap").classList.toggle("is-hidden",!customDiscountMode);
     if(customDiscountMode)$("#customDiscount").value=num(currentOff);
     $('[name="discount_percent"]').value=String(currentOff);
   };
-  const syncShipUI=()=>{$(".ship-mode").forEach(b=>b.classList.toggle("active",b.dataset.mode===shippingMode));$('[name="shipping_mode"]').value=shippingMode;$("#customShippingWrap").classList.toggle("is-hidden",shippingMode!=="custom")};
+  const syncShipUI=()=>{$$(".ship-mode").forEach(b=>b.classList.toggle("active",b.dataset.mode===shippingMode));$('[name="shipping_mode"]').value=shippingMode;$("#customShippingWrap").classList.toggle("is-hidden",shippingMode!=="custom")};
   const calc=()=>{
     const sub=currentSub(),cost=lines.reduce((x,y)=>x+Math.round(y.qty*(+ps.find(z=>z.id===y.product_id)?.cost_cents||0)),0),disc=Math.min(sub,Math.round(sub*currentOff/100)),discounted=Math.max(0,sub-disc),basis=freeBasis==="subtotal"?sub:discounted,autoFree=freeThreshold>0&&basis>=freeThreshold,customFee=cents($('[name="delivery_fee"]')?.value||0),df=shippingMode==="free"?0:shippingMode==="custom"?customFee:(autoFree?0:standardFee),of=cents($('[name="other_fee"]').value),dc=cents($('[name="delivery_cost"]').value),oc=cents($('[name="other_cost"]').value),total=Math.max(0,discounted+df+of),net=total-cost-dc-oc;
     $('[name="discount"]').value=(disc/100).toFixed(2);
@@ -188,12 +188,12 @@ async function pos(id){
       :shippingMode==="free"?"手動免運：客戶運費 $0；實際送貨成本仍會扣除":"使用自訂客戶運費";
     $("#totals").innerHTML=`<div class="total-row"><span>商品小計</span><b>${money(sub)}</b></div><div class="total-row"><span>折扣（${num(currentOff)}%）</span><b>-${money(disc)}</b></div><div class="total-row"><span>客戶運費</span><b>${money(df)}</b></div>${finance?`<div class="total-row"><span>商品成本</span><b>${money(cost)}</b></div><div class="total-row"><span>實際送貨成本</span><b>${money(dc)}</b></div>`:""}<div class="total-row grand"><span>應收總額</span><b>${money(total)}</b></div>${finance?`<div class="total-row profit"><span>此單淨利</span><b>${money(net)}</b></div>`:""}`;
   };
-  $(".discount-pill").forEach(b=>b.onclick=()=>{if(b.dataset.off==="custom"){customDiscountMode=true}else{customDiscountMode=false;currentOff=+b.dataset.off}syncDiscountUI();calc()});
+  $$(".discount-pill").forEach(b=>b.onclick=()=>{if(b.dataset.off==="custom"){customDiscountMode=true}else{customDiscountMode=false;currentOff=+b.dataset.off}syncDiscountUI();calc()});
   $("#customDiscount").oninput=e=>{customDiscountMode=true;currentOff=Math.max(0,Math.min(100,+e.target.value||0));$('[name="discount_percent"]').value=String(currentOff);calc()};
-  $(".ship-mode").forEach(b=>b.onclick=()=>{shippingMode=b.dataset.mode;syncShipUI();calc()});
+  $$(".ship-mode").forEach(b=>b.onclick=()=>{shippingMode=b.dataset.mode;syncShipUI();calc()});
   syncDiscountUI();syncShipUI();draw();calc();
   $("#addLine").onclick=()=>{lines.push({product_id:ps[0].id,qty:1,unit_price_cents:+ps[0].sale_price_cents||0});draw();calc()};
-  $('input[name="delivery_fee"],input[name="other_fee"],input[name="delivery_cost"],input[name="other_cost"]').forEach(x=>x.oninput=calc);
+  $$('input[name="delivery_fee"],input[name="other_fee"],input[name="delivery_cost"],input[name="other_cost"]').forEach(x=>x.oninput=calc);
   $("#back").onclick=()=>location.hash="#/orders";
   $("#orderForm").onsubmit=async e=>{e.preventDefault();const f=obj(e),payload={order_no:f.order_no,order_date:f.order_date,status:f.status,payment_method:f.payment_method,delivery_date:f.delivery_date,delivery_slot:f.delivery_slot,delivery_person:f.delivery_person,delivery_status:f.delivery_status,customer:{name:f.customer_name||"散客",phone:f.customer_phone,address:f.customer_address},items:lines,discount_percent:+f.discount_percent||0,discount_cents:cents(f.discount),shipping_mode:f.shipping_mode,delivery_fee_cents:cents(f.delivery_fee),other_fee_cents:cents(f.other_fee),paid_amount_cents:cents(f.paid_amount),delivery_cost_cents:cents(f.delivery_cost),other_cost_cents:cents(f.other_cost),notes:f.notes};try{const x=await req(id?"/api/orders/"+id:"/api/orders",{method:id?"PATCH":"POST",body:payload});toast("已儲存 "+x.order_no,"success");location.hash="#/orders"}catch(er){toast(er.message,"error")}}
 }
