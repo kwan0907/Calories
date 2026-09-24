@@ -16,6 +16,15 @@ const PERM_LABELS=[
   ["investors.read","查看投資者"],["investors.write","管理投資者"],["reports.read","查看報表"],
   ["accounts.manage","管理帳戶／審批"],["audit.read","查看操作紀錄"],["settings.read","查看設定"],["settings.write","修改設定"],["export.orders","匯出訂單 CSV"]
 ];
+const PERM_GRANTS={
+  "orders.write":["orders.read","products.read","delivery.read","customers.read","customers.write","customers.pii"],
+  "customers.write":["customers.read","customers.pii"],
+  "products.write":["products.read"],
+  "expenses.write":["expenses.read"],
+  "investors.write":["investors.read"],
+  "settings.write":["settings.read"],
+  "accounts.manage":["investors.read"]
+};
 
 document.addEventListener("DOMContentLoaded",boot);
 window.addEventListener("hashchange",()=>S.user&&route());
@@ -59,8 +68,8 @@ function register(){
 }
 function auth(t,sub,html){return `<div class="auth-shell"><div class="auth-card"><div class="brand-big"><div class="brand-mark">蟹</div><div><h1>${t}</h1><p>${sub}</p></div></div>${html}</div></div>`}
 function roleOf(){return S.user?.access_role||S.user?.role||"viewer"}
-function has(p){const r=roleOf(),a=S.user?.permissions||[];return r==="admin"||a.includes("*")||a.includes(p)}
-function homeRoute(){for(const [r,p] of [["dashboard","dashboard"],["orders","orders.read"],["products","products.read"],["reports","reports.read"],["users","accounts.manage"]])if(has(p))return r;return"dashboard"}
+function has(p){const r=roleOf(),a=S.user?.permissions||[];if(r==="admin"||a.includes("*")||a.includes(p))return true;return a.some(x=>(PERM_GRANTS[x]||[]).includes(p))}
+function homeRoute(){for(const [r,p] of [["dashboard","dashboard"],["orders","orders.read"],["products","products.read"],["reports","reports.read"],["users","accounts.manage"]])if(has(p))return r;return"noaccess"}
 function shell(){
   const nav=[
     ["dashboard","⌂","總覽",has("dashboard")],["pos","＋","POS 開單",has("orders.write")],["orders","▤","訂單",has("orders.read")],["delivery","🚚","送貨",has("delivery.read")&&has("orders.read")],
@@ -76,17 +85,20 @@ function shell(){
 function route(){
   const raw=(location.hash||"#/dashboard").replace(/^#\//,""),[r,q=""]=raw.split("?"),p=new URLSearchParams(q);
   [...document.querySelectorAll(".nav button")].forEach(b=>b.classList.toggle("active",b.dataset.r===r));
-  const map={dashboard,orders,delivery,customers,products,expenses,investors,reports,users,audit,settings,pos:()=>pos(p.get("edit"))};
-  (map[r]||dashboard)().catch(e=>{toast(e.message,"error");$("#content").innerHTML=`<div class="empty">${esc(e.message)}</div>`})
+  const map={dashboard,orders,delivery,customers,products,expenses,investors,reports,users,audit,settings,noaccess,pos:()=>pos(p.get("edit"))};
+  (map[r]||noaccess)().catch(e=>{toast(e.message,"error");$("#content").innerHTML=`<div class="empty">${esc(e.message)}</div>`})
+}
+async function noaccess(){
+  $("#content").innerHTML=head("帳戶已啟用","目前未獲分配任何功能權限")+"<div class=empty>請聯絡管理員設定身分或權限。</div>";
 }
 async function dashboard(){
-  const d=await req("/api/dashboard?today="+today());
+  const d=await req("/api/dashboard?today="+today()),finance=has("reports.read");
   $("#content").innerHTML=head("總覽","今日及本月生意狀況")+`
   <div class="grid cards">
     ${metric("今日營業額",money(d.today.revenue_cents),d.today.order_count+" 張訂單","gold")}
-    ${metric("今日淨利",money(d.today.net_profit_cents),"支出 "+money(d.today.expense_cents),"green")}
+    ${finance?metric("今日淨利",money(d.today.net_profit_cents),"支出 "+money(d.today.expense_cents),"green"):""}
     ${metric("本月營業額",money(d.month.revenue_cents),d.month.order_count+" 張訂單")}
-    ${metric("本月淨利",money(d.month.net_profit_cents),"支出 "+money(d.month.expense_cents),"green")}
+    ${finance?metric("本月淨利",money(d.month.net_profit_cents),"支出 "+money(d.month.expense_cents),"green"):""}
     ${metric("今日未收",money(d.today.unpaid_cents),"應收未收","red")}
     ${metric("本月未收",money(d.month.unpaid_cents),"應收未收","red")}
     ${d.investor?metric("我的估算應佔 "+num(d.investor.percentage)+"%",money(d.investor.estimated_share_cents),d.investor.name,"gold"):""}
@@ -98,7 +110,7 @@ async function dashboard(){
 async function getProducts(all=false){const x=await req("/api/products"+(all?"?all=1":""));S.products=x.products||[];return S.products}
 async function pos(id){
   if(!has("orders.write"))return location.hash="#/"+homeRoute();
-  const ps=await getProducts(),data=id?await req("/api/orders/"+encodeURIComponent(id)):null,o=data?.order||{},its=data?.items||[];
+  const finance=has("reports.read"),ps=await getProducts(!!id),data=id?await req("/api/orders/"+encodeURIComponent(id)):null,o=data?.order||{},its=data?.items||[];
   if(!ps.length){$("#content").innerHTML=head("POS 開單","請先新增產品")+"<div class=empty>沒有產品</div>";return}
   const lines=its.length?its.map(x=>({product_id:x.product_id,qty:+x.qty,unit_price_cents:+x.unit_price_cents})):[{product_id:ps[0].id,qty:1,unit_price_cents:+ps[0].sale_price_cents||0}];
   $("#content").innerHTML=head(id?"修改訂單":"POS 開單",id?esc(o.order_no):"快速開單")+`
@@ -114,7 +126,7 @@ async function pos(id){
   <div class="section-title"><h3>金額</h3></div><div class="form-grid">
     <div>${moneyInp("折扣","discount",o.discount_cents)}</div><div>${moneyInp("客戶送貨費","delivery_fee",o.delivery_fee_cents)}</div>
     <div>${moneyInp("其他收費","other_fee",o.other_fee_cents)}</div><div>${moneyInp("實收","paid_amount",o.paid_amount_cents)}</div>
-    <div>${moneyInp("實際送貨成本","delivery_cost",o.delivery_cost_cents)}</div><div>${moneyInp("其他成本","other_cost",o.other_cost_cents)}</div>
+    ${finance?`<div>${moneyInp("實際送貨成本","delivery_cost",o.delivery_cost_cents??S.settings.default_delivery_cost_cents)}</div><div>${moneyInp("其他成本","other_cost",o.other_cost_cents)}</div>`:`<input type=hidden name=delivery_cost value="${((+(o.delivery_cost_cents??S.settings.default_delivery_cost_cents)||0)/100).toFixed(2)}"><input type=hidden name=other_cost value="${((+o.other_cost_cents||0)/100).toFixed(2)}">`}
     <div class="span2"><label>備註</label><textarea name="notes">${esc(o.notes||"")}</textarea></div>
   </div><div id="totals" class="totals" style="margin-top:16px"></div>
   <div class="actions" style="justify-content:flex-end;margin-top:16px"><button type="button" id="back" class="btn">返回</button><button class="btn primary">${id?"儲存修改":"完成開單"}</button></div></div></form>`;
@@ -123,19 +135,19 @@ async function pos(id){
     <div><label>產品</label><select class="lp">${ps.map(z=>`<option value="${z.id}" ${z.id===x.product_id?"selected":""}>${esc(z.category)}｜${esc(z.name)}</option>`).join("")}</select></div>
     <div><label>數量</label><input class="lq" type="number" min=".01" step=".01" value="${x.qty}"></div>
     <div class="price-col"><label>單價</label><input class="lv" type="number" min="0" step=".01" value="${(x.unit_price_cents/100).toFixed(2)}"></div>
-    <div class="cost-col"><label>成本</label><input disabled value="${((+p.cost_cents||0)/100).toFixed(2)}"></div><button type="button" class="btn small danger remove">×</button></div>`}).join("");
+    ${finance?`<div class="cost-col"><label>成本</label><input disabled value="${((+p.cost_cents||0)/100).toFixed(2)}"></div>`:""}<button type="button" class="btn small danger remove">×</button></div>`}).join("");
     $$(".line-row",box).forEach(r=>{const i=+r.dataset.i;$(".lp",r).onchange=e=>{const p=ps.find(z=>z.id===e.target.value);lines[i].product_id=p.id;lines[i].unit_price_cents=+p.sale_price_cents||0;draw();calc()};$(".lq",r).oninput=e=>{lines[i].qty=+e.target.value||0;calc()};$(".lv",r).oninput=e=>{lines[i].unit_price_cents=cents(e.target.value);calc()};$(".remove",r).onclick=()=>{if(lines.length>1){lines.splice(i,1);draw();calc()}}})
   };
-  const calc=()=>{const sub=lines.reduce((a,x)=>a+Math.round(x.qty*x.unit_price_cents),0),cost=lines.reduce((a,x)=>a+Math.round(x.qty*(+ps.find(z=>z.id===x.product_id)?.cost_cents||0)),0),disc=cents($('[name="discount"]').value),df=cents($('[name="delivery_fee"]').value),of=cents($('[name="other_fee"]').value),dc=cents($('[name="delivery_cost"]').value),oc=cents($('[name="other_cost"]').value),total=Math.max(0,sub-disc+df+of),net=total-cost-dc-oc;$("#totals").innerHTML=`<div class="total-row"><span>商品小計</span><b>${money(sub)}</b></div><div class="total-row"><span>商品成本</span><b>${money(cost)}</b></div><div class="total-row grand"><span>應收總額</span><b>${money(total)}</b></div><div class="total-row profit"><span>此單淨利</span><b>${money(net)}</b></div>`};
+  const calc=()=>{const sub=lines.reduce((a,x)=>a+Math.round(x.qty*x.unit_price_cents),0),cost=lines.reduce((a,x)=>a+Math.round(x.qty*(+ps.find(z=>z.id===x.product_id)?.cost_cents||0)),0),disc=cents($('[name="discount"]').value),df=cents($('[name="delivery_fee"]').value),of=cents($('[name="other_fee"]').value),dc=cents($('[name="delivery_cost"]').value),oc=cents($('[name="other_cost"]').value),total=Math.max(0,sub-disc+df+of),net=total-cost-dc-oc;$("#totals").innerHTML=`<div class="total-row"><span>商品小計</span><b>${money(sub)}</b></div>${finance?`<div class="total-row"><span>商品成本</span><b>${money(cost)}</b></div>`:""}<div class="total-row grand"><span>應收總額</span><b>${money(total)}</b></div>${finance?`<div class="total-row profit"><span>此單淨利</span><b>${money(net)}</b></div>`:""}`};
   draw();calc();$("#addLine").onclick=()=>{lines.push({product_id:ps[0].id,qty:1,unit_price_cents:+ps[0].sale_price_cents||0});draw();calc()};$$('input[name="discount"],input[name="delivery_fee"],input[name="other_fee"],input[name="delivery_cost"],input[name="other_cost"]').forEach(x=>x.oninput=calc);$("#back").onclick=()=>location.hash="#/orders";
   $("#orderForm").onsubmit=async e=>{e.preventDefault();const f=obj(e),payload={order_no:f.order_no,order_date:f.order_date,status:f.status,payment_method:f.payment_method,delivery_date:f.delivery_date,delivery_slot:f.delivery_slot,delivery_person:f.delivery_person,delivery_status:f.delivery_status,customer:{name:f.customer_name||"散客",phone:f.customer_phone,address:f.customer_address,notes:""},items:lines,discount_cents:cents(f.discount),delivery_fee_cents:cents(f.delivery_fee),other_fee_cents:cents(f.other_fee),paid_amount_cents:cents(f.paid_amount),delivery_cost_cents:cents(f.delivery_cost),other_cost_cents:cents(f.other_cost),notes:f.notes};try{const x=await req(id?"/api/orders/"+id:"/api/orders",{method:id?"PATCH":"POST",body:payload});toast("已儲存 "+x.order_no,"success");location.hash="#/orders"}catch(er){toast(er.message,"error")}}
 }
 async function orders(){
   if(!has("orders.read"))return location.hash="#/"+homeRoute();
-  const a=has("orders.write"),pii=has("customers.pii"),canExport=has("export.orders");$("#content").innerHTML=head("訂單","搜尋、收款、利潤及送貨",a?'<button id="newO" class="btn primary">＋ 新訂單</button>':"")+`
+  const a=has("orders.write"),pii=has("customers.pii"),finance=has("reports.read"),canExport=has("export.orders");$("#content").innerHTML=head("訂單","搜尋、收款、利潤及送貨",a?'<button id="newO" class="btn primary">＋ 新訂單</button>':"")+`
   <div class="filters"><input id="q" placeholder="${a?"訂單 / 客戶 / 電話":"訂單編號"}"><input id="from" type="date"><input id="to" type="date"><select id="pay"><option value="">全部付款</option><option value="unpaid">未付款</option><option value="partial">部分付款</option><option value="paid">已付款</option></select><button id="go" class="btn">搜尋</button>${canExport?'<button id="csv" class="btn">CSV</button>':""}</div><div id="box" class="card"></div>`;
   if(a)$("#newO").onclick=()=>location.hash="#/pos";
-  const load=async()=>{const p=new URLSearchParams();["q","from","to"].forEach(k=>{$("#"+k).value&&p.set(k,$("#"+k).value)});$("#pay").value&&p.set("payment",$("#pay").value);const x=await req("/api/orders?"+p);$("#box").innerHTML=table(["訂單","客戶","內容","總額","付款","淨利","送貨",""],(x.orders||[]).map(o=>[`<b>${esc(o.order_no)}</b><div class=muted>${esc(o.order_date)}</div>`,pii?`${esc(o.customer_name||"散客")}<div class=muted>${esc(o.customer_phone||"")}</div>`:"已隱藏客戶資料",esc(o.item_summary||""),money(o.total_cents),payBadge(o.payment_status),`<span class="${+o.net_profit_cents>=0?"positive":"negative"}">${money(o.net_profit_cents)}</span>`,`${badge(o.delivery_status)}<div class=muted>${esc(o.delivery_date||"")}</div>`,a?`<button class="btn small edit" data-id="${o.id}">修改</button>`:""]));$$(".edit").forEach(b=>b.onclick=()=>location.hash="#/pos?edit="+encodeURIComponent(b.dataset.id))};
+  const load=async()=>{const p=new URLSearchParams();["q","from","to"].forEach(k=>{$("#"+k).value&&p.set(k,$("#"+k).value)});$("#pay").value&&p.set("payment",$("#pay").value);const x=await req("/api/orders?"+p),headers=["訂單","客戶","內容","總額","付款"],rows=(x.orders||[]).map(o=>[`<b>${esc(o.order_no)}</b><div class=muted>${esc(o.order_date)}</div>`,pii?`${esc(o.customer_name||"散客")}<div class=muted>${esc(o.customer_phone||"")}</div>`:"已隱藏客戶資料",esc(o.item_summary||""),money(o.total_cents),payBadge(o.payment_status)]);if(finance){headers.push("淨利");rows.forEach((r,i)=>{const o=x.orders[i];r.push(`<span class="${+o.net_profit_cents>=0?"positive":"negative"}">${money(o.net_profit_cents)}</span>`)})}headers.push("送貨","");rows.forEach((r,i)=>{const o=x.orders[i];r.push(`${badge(o.delivery_status)}<div class=muted>${esc(o.delivery_date||"")}</div>`,a?`<button class="btn small edit" data-id="${o.id}">修改</button>`:"")});$("#box").innerHTML=table(headers,rows);$(".edit").forEach(b=>b.onclick=()=>location.hash="#/pos?edit="+encodeURIComponent(b.dataset.id))};
   $("#go").onclick=load;$("#q").onkeydown=e=>e.key==="Enter"&&load();
   if(canExport)$("#csv").onclick=async()=>{try{const r=await fetch(API+"/api/export/orders.csv",{credentials:"include"});if(!r.ok)throw Error("匯出失敗");const b=await r.blob(),u=URL.createObjectURL(b),a=document.createElement("a");a.href=u;a.download="crab-pos-orders.csv";a.click();URL.revokeObjectURL(u)}catch(e){toast(e.message,"error")}};
   await load()
@@ -147,12 +159,12 @@ async function delivery(){
 }
 async function customers(){
   if(!has("customers.read"))return location.hash="#/"+homeRoute();const w=has("customers.write"),pii=has("customers.pii");
-  $("#content").innerHTML=head("客戶","客戶私隱由帳戶權限控制",w?'<button id="add" class="btn primary">＋ 客戶</button>':"")+'<div class="filters"><input id="cq" placeholder="姓名 / 電話"><button id="find" class="btn">搜尋</button></div><div id="box" class="card"></div>';
+  $("#content").innerHTML=head("客戶","客戶私隱由帳戶權限控制",w?'<button id="add" class="btn primary">＋ 客戶</button>':"")+`<div class="filters"><input id="cq" placeholder="${pii?"姓名 / 電話":"姓名"}"><button id="find" class="btn">搜尋</button></div><div id="box" class="card"></div>`;
   const load=async()=>{const x=await req("/api/customers?q="+encodeURIComponent($("#cq").value||""));$("#box").innerHTML=table(["客戶","電話","地址","訂單","累計消費",""],(x.customers||[]).map(c=>[esc(c.name),pii?esc(c.phone):"已隱藏",pii?esc(c.address):"已隱藏",c.order_count,money(c.lifetime_value_cents),w?`<button class="btn small ce" data-id="${c.id}">修改</button>`:""]));if(w)$(".ce").forEach(b=>b.onclick=()=>customerModal(x.customers.find(c=>c.id===b.dataset.id),load))};if(w)$("#add").onclick=()=>customerModal(null,load);$("#find").onclick=load;await load()
 }
 function customerModal(c,after){modal(c?"修改客戶":"新增客戶",`<form id="mf">${field("姓名","name","text",c?.name||"")}${field("電話","phone","text",c?.phone||"")}${field("地址","address","text",c?.address||"")}<div class=field><label>備註</label><textarea name=notes>${esc(c?.notes||"")}</textarea></div><button class="btn primary">儲存</button></form>`);$("#mf").onsubmit=async e=>{e.preventDefault();try{await req(c?"/api/customers/"+c.id:"/api/customers",{method:c?"PATCH":"POST",body:obj(e)});closeModal();after();toast("已儲存","success")}catch(er){toast(er.message,"error")}}}
 async function products(){
-  if(!has("products.read"))return location.hash="#/"+homeRoute();const a=has("products.write"),ps=await getProducts(a);$("#content").innerHTML=head("產品","售價、成本、分類及庫存",a?'<button id="add" class="btn primary">＋ 產品</button>':"")+`<div class=card>${table(["產品","分類","售價","成本","毛利","庫存","狀態",""],ps.map(p=>[`<b>${esc(p.name)}</b><div class=muted>${esc(p.sku||"")}</div>`,esc(p.category),money(p.sale_price_cents),money(p.cost_cents),money((+p.sale_price_cents||0)-(+p.cost_cents||0)),p.track_stock?num(p.stock_qty)+" "+esc(p.unit):"不追蹤",p.is_active?"上架":"停用",a?`<button class="btn small pe" data-id="${p.id}">修改</button>`:""]))}</div>`;if(a){$("#add").onclick=()=>productModal(null,()=>products());$$(".pe").forEach(b=>b.onclick=()=>productModal(ps.find(p=>p.id===b.dataset.id),()=>products()))}}
+  if(!has("products.read"))return location.hash="#/"+homeRoute();const a=has("products.write"),finance=has("reports.read")||a,ps=await getProducts(a),headers=["產品","分類","售價"],rows=ps.map(p=>[`<b>${esc(p.name)}</b><div class=muted>${esc(p.sku||"")}</div>`,esc(p.category),money(p.sale_price_cents)]);if(finance){headers.push("成本","毛利");rows.forEach((r,i)=>{const p=ps[i];r.push(money(p.cost_cents),money((+p.sale_price_cents||0)-(+p.cost_cents||0)))})}headers.push("庫存","狀態","");rows.forEach((r,i)=>{const p=ps[i];r.push(p.track_stock?num(p.stock_qty)+" "+esc(p.unit):"不追蹤",p.is_active?"上架":"停用",a?`<button class="btn small pe" data-id="${p.id}">修改</button>`:"")});$("#content").innerHTML=head("產品","售價、成本、分類及庫存",a?'<button id="add" class="btn primary">＋ 產品</button>':"")+`<div class=card>${table(headers,rows)}</div>`;if(a){$("#add").onclick=()=>productModal(null,()=>products());$(".pe").forEach(b=>b.onclick=()=>productModal(ps.find(p=>p.id===b.dataset.id),()=>products()))}}
 function productModal(p,after){modal(p?"修改產品":"新增產品",`<form id=mf><div class=form-grid><div class=span2>${inp("產品名稱","name",p?.name||"")}</div><div>${inp("分類","category",p?.category||"其他")}</div><div>${inp("SKU","sku",p?.sku||"")}</div><div>${inp("單位","unit",p?.unit||"隻")}</div><div>${moneyInp("成本","cost",p?.cost_cents)}</div><div>${moneyInp("售價","price",p?.sale_price_cents)}</div><div>${inp("庫存","stock_qty",p?.stock_qty??0,"","number")}</div><div>${sel("追蹤庫存","track_stock",[["0","否"],["1","是"]],String(p?.track_stock||0))}</div><div>${sel("狀態","is_active",[["1","上架"],["0","停用"]],String(p?.is_active??1))}</div></div><button class="btn primary">儲存</button></form>`);$("#mf").onsubmit=async e=>{e.preventDefault();const f=obj(e),b={...f,cost_cents:cents(f.cost),sale_price_cents:cents(f.price),stock_qty:+f.stock_qty||0,track_stock:+f.track_stock,is_active:+f.is_active};try{await req(p?"/api/products/"+p.id:"/api/products",{method:p?"PATCH":"POST",body:b});closeModal();after();toast("產品已儲存","success")}catch(er){toast(er.message,"error")}}}
 async function expenses(){
   if(!has("expenses.read"))return location.hash="#/"+homeRoute();const a=has("expenses.write"),from=today().slice(0,7)+"-01",x=await req("/api/expenses?from="+from+"&to="+today());$("#content").innerHTML=head("支出","營運支出會從報表淨利扣除",a?'<button id="add" class="btn primary">＋ 支出</button>':"")+`<div class=card>${table(["日期","類型","說明","金額","備註"],(x.expenses||[]).map(e=>[esc(e.expense_date),esc(e.type),esc(e.description),money(e.amount_cents),esc(e.notes||"")]))}</div>`;if(a)$("#add").onclick=()=>expenseModal(()=>expenses())
@@ -177,7 +189,7 @@ async function users(){
   bind();$("#add").onclick=()=>userModal(i.investors||[],()=>users())
 }
 function permsHtml(selected=[]){return `<div class="perm-grid">${PERM_LABELS.map(([k,l])=>`<label class="perm-item"><input type="checkbox" name="perm" value="${attr(k)}" ${selected.includes("*")||selected.includes(k)?"checked":""}><span>${esc(l)}</span></label>`).join("")}</div>`}
-function roleOptions(v){return sel("身分","access_role",[["admin","管理員"],["staff","員工"],["investor","投資者"],["viewer","只讀"],["customer","客戶"]],v)}
+function roleOptions(v){return sel("身分","access_role",[["admin","管理員"],["staff","員工"],["investor","投資者"],["viewer","只讀"]],v)}
 function collectPerms(form,role){if(role==="admin")return["*"];return [...form.querySelectorAll('input[name="perm"]:checked')].map(x=>x.value)}
 function wireRoleDefaults(form,roleSel){roleSel.onchange=()=>{const d=ROLE_DEFAULTS[roleSel.value]||[];form.querySelectorAll('input[name="perm"]').forEach(x=>x.checked=d.includes("*")||d.includes(x.value))}}
 function toggleInvestorLink(form,roleSel){const box=form.querySelector("[data-investor-link]");if(!box)return;box.classList.toggle("is-hidden",roleSel.value!=="investor");if(roleSel.value!=="investor"){const x=box.querySelector('[name="investor_id"]');if(x)x.value=""}}
