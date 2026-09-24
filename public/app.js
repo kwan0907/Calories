@@ -115,11 +115,11 @@ document.addEventListener("visibilitychange",()=>{
 });
 
 async function req(path,opt={}){
-  const method=String(opt.method||"GET").toUpperCase(),isGet=method==="GET",key=cacheKey(path),useCache=isGet&&opt.cache!==false&&!path.startsWith("/api/auth/")&&!path.startsWith("/api/setup");
-  const fetchOnce=async()=>{
+  const method=String(opt.method||"GET").toUpperCase(),isGet=method==="GET",key=cacheKey(path),useCache=isGet&&opt.cache!==false&&!path.startsWith("/api/auth/")&&!path.startsWith("/api/setup"),warmKey="warm:"+key,routeKey="route:"+key,flightKey=opt.noAbort?warmKey:routeKey;
+  const fetchOnce=async(detached=false)=>{
     const init={method,headers:{},credentials:"include"},ctrl=new AbortController();let timedOut=false;
     if(opt.body!==undefined){init.headers["content-type"]="application/json";init.body=JSON.stringify(opt.body)}
-    const routeSignal=isGet&&!opt.noAbort?ROUTE_CONTROLLER?.signal:null;
+    const routeSignal=isGet&&!opt.noAbort&&!detached?ROUTE_CONTROLLER?.signal:null;
     if(routeSignal){if(routeSignal.aborted)ctrl.abort();else routeSignal.addEventListener("abort",()=>ctrl.abort(),{once:true})}
     const timer=setTimeout(()=>{timedOut=true;ctrl.abort()},opt.timeout||REQUEST_TIMEOUT);init.signal=ctrl.signal;
     try{
@@ -138,21 +138,22 @@ async function req(path,opt={}){
       if(hit){
         const age=Date.now()-hit.ts;
         if(age<CACHE_TTL)return hit.data;
-        if(!API_INFLIGHT.has(key)){
-          const bg=fetchOnce().then(d=>{
+        if(!API_INFLIGHT.has(warmKey)){
+          const bg=fetchOnce(true).then(d=>{
             const before=JSON.stringify(hit.data),after=JSON.stringify(d);
             API_CACHE.set(key,{data:d,ts:Date.now()});
             if(before!==after)scheduleRouteRefresh(path);
             return d
-          }).catch(e=>{if(!isAbortError(e))console.warn("SWR refresh failed",path,e)}).finally(()=>API_INFLIGHT.delete(key));
-          API_INFLIGHT.set(key,bg)
+          }).catch(e=>{if(!isAbortError(e))console.warn("SWR refresh failed",path,e)}).finally(()=>API_INFLIGHT.delete(warmKey));
+          API_INFLIGHT.set(warmKey,bg)
         }
         return hit.data
       }
     }
-    if(API_INFLIGHT.has(key))return API_INFLIGHT.get(key);
-    const p=fetchOnce().then(d=>{if(useCache)API_CACHE.set(key,{data:d,ts:Date.now()});return d}).finally(()=>API_INFLIGHT.delete(key));
-    API_INFLIGHT.set(key,p);return p
+    if(API_INFLIGHT.has(warmKey))return API_INFLIGHT.get(warmKey);
+    if(API_INFLIGHT.has(flightKey))return API_INFLIGHT.get(flightKey);
+    const p=fetchOnce().then(d=>{if(useCache)API_CACHE.set(key,{data:d,ts:Date.now()});return d}).finally(()=>API_INFLIGHT.delete(flightKey));
+    API_INFLIGHT.set(flightKey,p);return p
   }
   const lockKey=opt.lockKey||method+":"+path;
   if(MUTATION_LOCKS.has(lockKey))return MUTATION_LOCKS.get(lockKey);
@@ -226,7 +227,7 @@ function shell(){
   setNetworkState();warmCommonData()
 }
 function route(){
-  ROUTE_CONTROLLER?.abort();ROUTE_CONTROLLER=new AbortController();API_INFLIGHT.clear();
+  ROUTE_CONTROLLER?.abort();ROUTE_CONTROLLER=new AbortController();for(const k of [...API_INFLIGHT.keys()])if(k.startsWith("route:"))API_INFLIGHT.delete(k);
   if($("#modal"))closeModal();
   const nextHash=location.hash||"#/dashboard",currentY=window.scrollY||0,sameHash=nextHash===LAST_HASH;
   if(!sameHash&&LAST_HASH)SCROLL_POS.set(LAST_HASH,currentY);
