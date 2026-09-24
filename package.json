@@ -1,0 +1,16 @@
+{
+  "name": "crab-pos",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Independent crab sales POS, accounting, delivery and investor reporting system for Cloudflare Workers + D1.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:create": "wrangler d1 create crab-pos-db --location apac",
+    "db:migrate:local": "wrangler d1 migrations apply crab-pos-db --local",
+    "db:migrate:remote": "wrangler d1 migrations apply crab-pos-db --remote"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
