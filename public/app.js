@@ -180,9 +180,50 @@ function permsHtml(selected=[]){return `<div class="perm-grid">${PERM_LABELS.map
 function roleOptions(v){return sel("身分","access_role",[["admin","管理員"],["staff","員工"],["investor","投資者"],["viewer","只讀"],["customer","客戶"]],v)}
 function collectPerms(form,role){if(role==="admin")return["*"];return [...form.querySelectorAll('input[name="perm"]:checked')].map(x=>x.value)}
 function wireRoleDefaults(form,roleSel){roleSel.onchange=()=>{const d=ROLE_DEFAULTS[roleSel.value]||[];form.querySelectorAll('input[name="perm"]').forEach(x=>x.checked=d.includes("*")||d.includes(x.value))}}
-function toggleInvestorLink(form,roleSel){const box=form.querySelector("[data-investor-link]");if(!box)return;box.style.display=roleSel.value==="investor"?"block":"none";if(roleSel.value!=="investor"){const x=box.querySelector('[name="investor_id"]');if(x)x.value=""}}
-function userModal(ins,after){const def="staff";modal("新增帳戶",`<form id=mf>${field("名稱","name")}${field("Email","email","email")}<div class=field>${roleOptions(def)}</div><div class=field data-investor-link style="display:none">${sel("連結投資者（只適用投資者）","investor_id",[["","不連結"],...ins.map(i=>[i.id,i.name+" ("+num(i.percentage)+"%)"])],"")}</div>${field("密碼","password","password")}<div class=field><label>權限</label>${permsHtml(ROLE_DEFAULTS[def])}</div><button class="btn primary">建立</button></form>`);const f=$("#mf"),rs=f.querySelector('[name="access_role"]');wireRoleDefaults(f,rs);const oldChange=rs.onchange;rs.onchange=()=>{oldChange();toggleInvestorLink(f,rs)};toggleInvestorLink(f,rs);f.onsubmit=async e=>{e.preventDefault();const b=obj(e);b.permissions=collectPerms(f,b.access_role);try{await req("/api/users",{method:"POST",body:b});closeModal();after();toast("帳戶已建立","success")}catch(er){toast(er.message,"error")}}}
-function manageUserModal(u,ins,after){const selected=u.permissions||ROLE_DEFAULTS[u.access_role]||[];modal(u.account_status==="pending"?"審批帳戶":"帳戶設定",`<form id=mf><div class=form-grid><div>${inp("名稱","name",u.name||"")}</div><div>${inp("Email","email",u.email||"","","email")}</div></div><div class=field>${sel("審批狀態","account_status",[["active","批准／啟用"],["pending","待審批"],["rejected","拒絕"]],u.account_status||"pending")}</div><div class=field>${roleOptions(u.access_role||"viewer")}</div><div class=field data-investor-link>${sel("連結投資者（只適用投資者）","investor_id",[["","不連結"],...ins.map(i=>[i.id,i.name+" ("+num(i.percentage)+"%)"])],u.investor_id||"")}</div><div class=field>${inp("重設密碼（留空＝不修改）","password","","至少 10 個字元","password")}</div><div class=field><label>權限</label>${permsHtml(selected)}</div><button class="btn primary">儲存帳戶設定</button></form>`);const f=$("#mf"),rs=f.querySelector('[name="access_role"]');wireRoleDefaults(f,rs);const oldChange=rs.onchange;rs.onchange=()=>{oldChange();toggleInvestorLink(f,rs)};toggleInvestorLink(f,rs);f.onsubmit=async e=>{e.preventDefault();const b=obj(e);b.permissions=collectPerms(f,b.access_role);try{await req("/api/users/"+u.id,{method:"PATCH",body:b});if(u.id===S.user.id){S.user.name=b.name;S.user.email=b.email}closeModal();after();toast("帳戶設定已更新","success")}catch(er){toast(er.message,"error")}}}
+function toggleInvestorLink(form,roleSel){const box=form.querySelector("[data-investor-link]");if(!box)return;box.classList.toggle("is-hidden",roleSel.value!=="investor");if(roleSel.value!=="investor"){const x=box.querySelector('[name="investor_id"]');if(x)x.value=""}}
+function userModal(ins,after){
+  const def="staff";
+  modal("新增帳戶",`<form id=mf class="account-form">${field("名稱","name")}${field("Email","email","email")}<div class=field>${roleOptions(def)}</div><div class="field is-hidden" data-investor-link>${sel("連結投資者（只適用投資者）","investor_id",[["","不連結"],...ins.map(i=>[i.id,i.name+" ("+num(i.percentage)+"%)"])],"")}</div>${field("密碼","password","password")}<div class=field><label>權限</label>${permsHtml(ROLE_DEFAULTS[def])}</div><div class="modal-savebar"><div class="form-status" aria-live="polite"></div><button id=userSave type=button class="btn primary">建立帳戶</button></div></form>`);
+  const f=$("#mf"),rs=f.querySelector('[name="access_role"]'),btn=$("#userSave"),status=f.querySelector(".form-status");
+  wireRoleDefaults(f,rs);
+  const oldChange=rs.onchange;
+  rs.onchange=()=>{oldChange();toggleInvestorLink(f,rs)};
+  toggleInvestorLink(f,rs);
+  btn.onclick=async()=>{
+    const b=Object.fromEntries(new FormData(f));
+    b.permissions=collectPerms(f,b.access_role);
+    btn.disabled=true;btn.textContent="建立中…";status.textContent="正在建立帳戶…";status.className="form-status";
+    try{
+      await req("/api/users",{method:"POST",body:b});
+      status.textContent="已建立";status.className="form-status success";toast("帳戶已建立","success");
+      setTimeout(()=>{closeModal();after()},250);
+    }catch(er){
+      btn.disabled=false;btn.textContent="建立帳戶";status.textContent=er.message;status.className="form-status error";toast(er.message,"error");
+    }
+  };
+}
+function manageUserModal(u,ins,after){
+  const selected=u.permissions||ROLE_DEFAULTS[u.access_role]||[];
+  modal(u.account_status==="pending"?"審批帳戶":"帳戶設定",`<form id=mf class="account-form"><div class=form-grid><div>${inp("名稱","name",u.name||"")}</div><div>${inp("Email","email",u.email||"","","email")}</div></div><div class=field>${sel("審批狀態","account_status",[["active","批准／啟用"],["pending","待審批"],["rejected","拒絕"]],u.account_status||"pending")}</div><div class=field>${roleOptions(u.access_role||"viewer")}</div><div class=field data-investor-link>${sel("連結投資者（只適用投資者）","investor_id",[["","不連結"],...ins.map(i=>[i.id,i.name+" ("+num(i.percentage)+"%)"])],u.investor_id||"")}</div><div class=field>${inp("重設密碼（留空＝不修改）","password","","至少 10 個字元","password")}</div><div class=field><label>權限</label>${permsHtml(selected)}</div><div class="modal-savebar"><div class="form-status" aria-live="polite"></div><button id=userSave type=button class="btn primary">儲存帳戶設定</button></div></form>`);
+  const f=$("#mf"),rs=f.querySelector('[name="access_role"]'),btn=$("#userSave"),status=f.querySelector(".form-status");
+  wireRoleDefaults(f,rs);
+  const oldChange=rs.onchange;
+  rs.onchange=()=>{oldChange();toggleInvestorLink(f,rs)};
+  toggleInvestorLink(f,rs);
+  btn.onclick=async()=>{
+    const b=Object.fromEntries(new FormData(f));
+    b.permissions=collectPerms(f,b.access_role);
+    btn.disabled=true;btn.textContent="儲存中…";status.textContent="正在儲存…";status.className="form-status";
+    try{
+      await req("/api/users/"+u.id,{method:"PATCH",body:b});
+      if(u.id===S.user.id){S.user.name=b.name;S.user.email=b.email}
+      status.textContent="已儲存";status.className="form-status success";toast("帳戶設定已更新","success");
+      setTimeout(()=>{closeModal();after()},250);
+    }catch(er){
+      btn.disabled=false;btn.textContent="儲存帳戶設定";status.textContent=er.message;status.className="form-status error";toast(er.message,"error");
+    }
+  };
+}
 function accountBadge(s,on){const m={pending:"待審批",active:on?"已啟用":"已停用",rejected:"已拒絕"};return `<span class="badge ${s==="active"&&on?"done":s==="pending"?"partial":"unpaid"}">${m[s]||esc(s)}</span>`}
 async function audit(){
   if(!has("audit.read"))return location.hash="#/"+homeRoute();const x=await req("/api/audit");$("#content").innerHTML=head("操作紀錄","重要新增及修改紀錄")+`<div class=card>${table(["時間","人員","動作","類型","內容"],(x.logs||[]).map(l=>[esc(l.created_at),esc(l.user_name||"-"),esc(l.action),esc(l.entity_type),esc((l.after_json||"").slice(0,120))]))}</div>`
