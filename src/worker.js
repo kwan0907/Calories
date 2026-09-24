@@ -313,7 +313,7 @@ async function api(req,env,u){
         FROM orders WHERE deleted_at IS NULL AND order_date BETWEEN ? AND ? AND status IN ('confirmed','completed')`).bind(from,to).first(),
       env.DB.prepare("SELECT COALESCE(SUM(amount_cents),0) expense_cents FROM expenses WHERE expense_date BETWEEN ? AND ?").bind(from,to).first(),
       env.DB.prepare(`SELECT order_date date,COUNT(*) orders,SUM(total_cents) revenue_cents,SUM(net_profit_cents) order_profit_cents FROM orders
-        WHERE order_date BETWEEN ? AND ? AND status IN ('confirmed','completed') GROUP BY order_date ORDER BY order_date`).bind(from,to).all(),
+        WHERE deleted_at IS NULL AND order_date BETWEEN ? AND ? AND status IN ('confirmed','completed') GROUP BY order_date ORDER BY order_date`).bind(from,to).all(),
       env.DB.prepare(`SELECT oi.product_name_snapshot name,SUM(oi.qty) qty,SUM(oi.line_total_cents) sales_cents,SUM(oi.line_cost_cents) cost_cents
         FROM order_items oi JOIN orders o ON o.id=oi.order_id WHERE o.deleted_at IS NULL AND o.order_date BETWEEN ? AND ? AND o.status IN ('confirmed','completed')
         GROUP BY oi.product_name_snapshot ORDER BY sales_cents DESC`).bind(from,to).all()
