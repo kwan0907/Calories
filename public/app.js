@@ -18,6 +18,7 @@ const PERM_LABELS=[
 ];
 const PERM_GRANTS={
   "orders.write":["orders.read","products.read","delivery.read","customers.read","customers.write","customers.pii"],
+  "orders.delete":["orders.read"],
   "customers.write":["customers.read","customers.pii"],
   "products.write":["products.read"],
   "expenses.write":["expenses.read"],
