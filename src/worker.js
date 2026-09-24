@@ -7,6 +7,15 @@ const ROLE_PERMISSIONS={
   customer:[]
 };
 const KNOWN_PERMISSIONS=["dashboard","orders.read","orders.write","delivery.read","customers.read","customers.write","customers.pii","products.read","products.write","expenses.read","expenses.write","investors.read","investors.write","reports.read","accounts.manage","audit.read","settings.read","settings.write","export.orders"];
+const PERM_GRANTS={
+  "orders.write":["orders.read","products.read","delivery.read","customers.read","customers.write","customers.pii"],
+  "customers.write":["customers.read","customers.pii"],
+  "products.write":["products.read"],
+  "expenses.write":["expenses.read"],
+  "investors.write":["investors.read"],
+  "settings.write":["settings.read"],
+  "accounts.manage":["investors.read"]
+};
 
 export default{
   async fetch(req,env){
@@ -90,16 +99,22 @@ async function api(req,env,u){
     const out={ok:true,today:{...nums(t),expense_cents:+te.n||0,net_profit_cents:(+t.order_profit_cents||0)-(+te.n||0)},
       month:{...nums(mo),expense_cents:+me.n||0,net_profit_cents:(+mo.order_profit_cents||0)-(+me.n||0)},
       top_products:top.results||[],deliveries:del.results||[]};
-    if(user.role==="investor") out.investor={name:user.investor_name||user.name,percentage:+user.investor_percentage||0,
+    const finance=can(user,"reports.read");
+    if(roleOf(user)==="investor"&&finance) out.investor={name:user.investor_name||user.name,percentage:+user.investor_percentage||0,
       estimated_share_cents:Math.round(out.month.net_profit_cents*(+user.investor_percentage||0)/100)};
+    if(!finance){
+      for(const x of [out.today,out.month]){delete x.order_profit_cents;delete x.expense_cents;delete x.net_profit_cents}
+    }
     return j(out);
   }
 
   if(p==="/api/products"&&m==="GET"){
     need(user,"products.read");
-    const all=can(user,"products.write")&&u.searchParams.get("all")==="1";
+    const all=(can(user,"products.write")||can(user,"orders.write"))&&u.searchParams.get("all")==="1";
     const r=await env.DB.prepare(`SELECT * FROM products ${all?"":"WHERE is_active=1"} ORDER BY category,name`).all();
-    return j({ok:true,products:r.results||[]});
+    let products=r.results||[];
+    if(!can(user,"reports.read")&&!can(user,"products.write")) products=products.map(x=>{const y={...x};delete y.cost_cents;return y});
+    return j({ok:true,products});
   }
   if(p==="/api/products"&&m==="POST"){
     need(user,"products.write"); const b=await body(req),x=product(b),id=crypto.randomUUID();
@@ -120,11 +135,16 @@ async function api(req,env,u){
   }
 
   if(p==="/api/customers"&&m==="GET"){
-    need(user,"customers.read"); const q=s(u.searchParams.get("q")||"",100),like="%"+q+"%";
-    const r=await env.DB.prepare(`SELECT c.*,COUNT(o.id) order_count,COALESCE(SUM(CASE WHEN o.status!='cancelled' THEN o.total_cents ELSE 0 END),0) lifetime_value_cents
-      FROM customers c LEFT JOIN orders o ON o.customer_id=c.id WHERE (?='' OR c.name LIKE ? OR c.phone LIKE ?)
-      GROUP BY c.id ORDER BY c.updated_at DESC LIMIT 200`).bind(q,like,like).all();
-    let customers=r.results||[]; if(!can(user,"customers.pii")) customers=customers.map(x=>({...x,phone:"",address:""}));
+    need(user,"customers.read"); const q=s(u.searchParams.get("q")||"",100),like="%"+q+"%",pii=can(user,"customers.pii");
+    const sql=pii
+      ? `SELECT c.*,COUNT(o.id) order_count,COALESCE(SUM(CASE WHEN o.status!='cancelled' THEN o.total_cents ELSE 0 END),0) lifetime_value_cents
+         FROM customers c LEFT JOIN orders o ON o.customer_id=c.id WHERE (?='' OR c.name LIKE ? OR c.phone LIKE ?)
+         GROUP BY c.id ORDER BY c.updated_at DESC LIMIT 200`
+      : `SELECT c.*,COUNT(o.id) order_count,COALESCE(SUM(CASE WHEN o.status!='cancelled' THEN o.total_cents ELSE 0 END),0) lifetime_value_cents
+         FROM customers c LEFT JOIN orders o ON o.customer_id=c.id WHERE (?='' OR c.name LIKE ?)
+         GROUP BY c.id ORDER BY c.updated_at DESC LIMIT 200`;
+    const r=pii?await env.DB.prepare(sql).bind(q,like,like).all():await env.DB.prepare(sql).bind(q,like).all();
+    let customers=r.results||[]; if(!pii) customers=customers.map(x=>({...x,phone:"",address:"",notes:""}));
     return j({ok:true,customers});
   }
   if(p==="/api/customers"&&m==="POST"){
@@ -144,20 +164,25 @@ async function api(req,env,u){
     need(user,"orders.read");
     const q=s(u.searchParams.get("q")||"",80),from=s(u.searchParams.get("from")||"",10),to=s(u.searchParams.get("to")||"",10),pay=s(u.searchParams.get("payment")||"",20);
     const w=["1=1"],a=[]; if(from){w.push("o.order_date>=?");a.push(from)} if(to){w.push("o.order_date<=?");a.push(to)} if(pay){w.push("o.payment_status=?");a.push(pay)}
-    if(q){if(user.role==="admin"){w.push("(o.order_no LIKE ? OR c.name LIKE ? OR c.phone LIKE ?)");a.push("%"+q+"%","%"+q+"%","%"+q+"%")}else{w.push("o.order_no LIKE ?");a.push("%"+q+"%")}}
+    if(q){if(can(user,"customers.pii")){w.push("(o.order_no LIKE ? OR c.name LIKE ? OR c.phone LIKE ?)");a.push("%"+q+"%","%"+q+"%","%"+q+"%")}else{w.push("o.order_no LIKE ?");a.push("%"+q+"%")}}
     const pii=can(user,"customers.pii")?",c.name customer_name,c.phone customer_phone,c.address customer_address":"";
     const r=await env.DB.prepare(`SELECT o.* ${pii},GROUP_CONCAT(oi.product_name_snapshot||' ×'||printf('%g',oi.qty),'、') item_summary
       FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN order_items oi ON oi.order_id=o.id
       WHERE ${w.join(" AND ")} GROUP BY o.id ORDER BY o.order_date DESC,o.created_at DESC LIMIT 300`).bind(...a).all();
-    return j({ok:true,orders:r.results||[]});
+    let orders=r.results||[];
+    if(!can(user,"reports.read")) orders=orders.map(hideOrderFinance);
+    return j({ok:true,orders});
   }
   if(p==="/api/orders"&&m==="POST"){need(user,"orders.write");return j(await saveOrder(env,user,await body(req),null),201)}
   mm=p.match(/^\/api\/orders\/([^/]+)$/);
   if(mm&&m==="GET"){
     need(user,"orders.read");
     const pii=can(user,"customers.pii")?",c.name customer_name,c.phone customer_phone,c.address customer_address":"";
-    const o=await env.DB.prepare(`SELECT o.* ${pii} FROM orders o LEFT JOIN customers c ON c.id=o.customer_id WHERE o.id=?`).bind(mm[1]).first(); if(!o)return nf();
-    const items=await env.DB.prepare("SELECT * FROM order_items WHERE order_id=?").bind(mm[1]).all(); return j({ok:true,order:o,items:items.results||[]});
+    let o=await env.DB.prepare(`SELECT o.* ${pii} FROM orders o LEFT JOIN customers c ON c.id=o.customer_id WHERE o.id=?`).bind(mm[1]).first(); if(!o)return nf();
+    const items=await env.DB.prepare("SELECT * FROM order_items WHERE order_id=?").bind(mm[1]).all();
+    let outItems=items.results||[];
+    if(!can(user,"reports.read")){o=hideOrderFinance(o);outItems=outItems.map(x=>{const y={...x};delete y.unit_cost_cents;delete y.line_cost_cents;return y})}
+    return j({ok:true,order:o,items:outItems});
   }
   if(mm&&m==="PATCH"){need(user,"orders.write");return j(await saveOrder(env,user,await body(req),mm[1]))}
 
@@ -259,7 +284,7 @@ async function api(req,env,u){
         GROUP BY oi.product_name_snapshot ORDER BY sales_cents DESC`).bind(from,to).all()
     ]);
     const sum={...nums(o),expense_cents:+e.expense_cents||0};sum.net_profit_cents=sum.order_profit_cents-sum.expense_cents;
-    if(user.role==="investor"){sum.investor_percentage=+user.investor_percentage||0;sum.investor_share_cents=Math.round(sum.net_profit_cents*sum.investor_percentage/100)}
+    if(roleOf(user)==="investor"){sum.investor_percentage=+user.investor_percentage||0;sum.investor_share_cents=Math.round(sum.net_profit_cents*sum.investor_percentage/100)}
     return j({ok:true,from,to,summary:sum,by_day:byday.results||[],by_product:byp.results||[]});
   }
 
@@ -283,31 +308,109 @@ async function createFirstAdmin(env,b){
 }
 
 async function saveOrder(env,user,b,id){
-  const old=id?await env.DB.prepare("SELECT * FROM orders WHERE id=?").bind(id).first():null;if(id&&!old)throw bad("找不到訂單",404);
+  const old=id?await env.DB.prepare("SELECT * FROM orders WHERE id=?").bind(id).first():null;
+  if(id&&!old)throw bad("找不到訂單",404);
+  const oldItemsRes=id?await env.DB.prepare("SELECT * FROM order_items WHERE order_id=?").bind(id).all():{results:[]};
+  const oldRows=oldItemsRes.results||[];
+
   let cid=b.customer_id||old?.customer_id||null;
   if(b.customer){
-    const c=customer(b.customer);
-    if(cid) await env.DB.prepare("UPDATE customers SET name=?,phone=?,address=?,notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(c.name,c.phone,c.address,c.notes,cid).run();
-    else{cid=crypto.randomUUID();await env.DB.prepare("INSERT INTO customers(id,name,phone,address,notes) VALUES(?,?,?,?,?)").bind(cid,c.name,c.phone,c.address,c.notes).run()}
+    const incoming={
+      name:s(b.customer.name||"散客",120),
+      phone:s(b.customer.phone||"",50),
+      address:s(b.customer.address||"",400),
+      notes:b.customer.notes==null?null:s(b.customer.notes,1000)
+    };
+    let current=cid?await env.DB.prepare("SELECT * FROM customers WHERE id=?").bind(cid).first():null;
+    if(current&&incoming.phone&&current.phone&&incoming.phone!==current.phone){
+      const match=await env.DB.prepare("SELECT * FROM customers WHERE phone=? AND phone<>'' ORDER BY updated_at DESC LIMIT 1").bind(incoming.phone).first();
+      current=match||null; cid=match?.id||null;
+    }else if(!current&&incoming.phone){
+      const match=await env.DB.prepare("SELECT * FROM customers WHERE phone=? AND phone<>'' ORDER BY updated_at DESC LIMIT 1").bind(incoming.phone).first();
+      current=match||null; cid=match?.id||null;
+    }
+    const isWalkIn=!cid&&!incoming.phone&&!incoming.address&&(incoming.name==="散客"||!incoming.name);
+    if(!isWalkIn){
+      if(current){
+        const x={
+          name:incoming.name||current.name||"散客",
+          phone:incoming.phone||current.phone||"",
+          address:incoming.address||current.address||"",
+          notes:incoming.notes==null?(current.notes||""):incoming.notes
+        };
+        await env.DB.prepare("UPDATE customers SET name=?,phone=?,address=?,notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(x.name,x.phone,x.address,x.notes,current.id).run();
+        cid=current.id;
+      }else{
+        cid=crypto.randomUUID();
+        await env.DB.prepare("INSERT INTO customers(id,name,phone,address,notes) VALUES(?,?,?,?,?)").bind(cid,incoming.name||"散客",incoming.phone,incoming.address,incoming.notes||"").run();
+      }
+    }else cid=null;
   }
+
+  const oldCost=new Map();
+  for(const x of oldRows) if(x.product_id&&!oldCost.has(x.product_id)) oldCost.set(x.product_id,+x.unit_cost_cents||0);
+
   let items=[];
   if(Array.isArray(b.items)){
     if(!b.items.length)throw bad("至少要有一項產品");
     for(const x of b.items){
-      const p=await env.DB.prepare("SELECT * FROM products WHERE id=?").bind(x.product_id).first(); if(!p)throw bad("找不到產品");
-      const qty=+x.qty||0;if(qty<=0)throw bad("數量不正確");const price=x.unit_price_cents==null?+p.sale_price_cents:int(x.unit_price_cents),cost=+p.cost_cents||0;
+      const p=await env.DB.prepare("SELECT * FROM products WHERE id=?").bind(x.product_id).first();
+      if(!p)throw bad("找不到產品");
+      const qty=+x.qty||0;
+      if(qty<=0)throw bad("數量不正確");
+      const price=x.unit_price_cents==null?+p.sale_price_cents:int(x.unit_price_cents);
+      const cost=id&&oldCost.has(p.id)?oldCost.get(p.id):(+p.cost_cents||0);
       items.push({id:crypto.randomUUID(),product_id:p.id,name:p.name,unit:p.unit,qty,price,cost,total:Math.round(qty*price),linecost:Math.round(qty*cost)});
     }
-  }else if(id){const r=await env.DB.prepare("SELECT * FROM order_items WHERE order_id=?").bind(id).all();items=(r.results||[]).map(x=>({id:x.id,product_id:x.product_id,name:x.product_name_snapshot,unit:x.unit_snapshot,qty:+x.qty,price:+x.unit_price_cents,cost:+x.unit_cost_cents,total:+x.line_total_cents,linecost:+x.line_cost_cents}))}
-  const subtotal=items.reduce((a,x)=>a+x.total,0),pcost=items.reduce((a,x)=>a+x.linecost,0),disc=Math.max(0,int(b.discount_cents??old?.discount_cents)),df=Math.max(0,int(b.delivery_fee_cents??old?.delivery_fee_cents)),of=Math.max(0,int(b.other_fee_cents??old?.other_fee_cents)),dc=Math.max(0,int(b.delivery_cost_cents??old?.delivery_cost_cents)),oc=Math.max(0,int(b.other_cost_cents??old?.other_cost_cents));
+  }else if(id){
+    items=oldRows.map(x=>({id:x.id,product_id:x.product_id,name:x.product_name_snapshot,unit:x.unit_snapshot,qty:+x.qty,price:+x.unit_price_cents,cost:+x.unit_cost_cents,total:+x.line_total_cents,linecost:+x.line_cost_cents}));
+  }
+
+  const subtotal=items.reduce((a,x)=>a+x.total,0),pcost=items.reduce((a,x)=>a+x.linecost,0);
+  const disc=Math.max(0,int(b.discount_cents??old?.discount_cents)),df=Math.max(0,int(b.delivery_fee_cents??old?.delivery_fee_cents)),of=Math.max(0,int(b.other_fee_cents??old?.other_fee_cents));
+  const finance=can(user,"reports.read")||can(user,"products.write");
+  let defaultDc=0;
+  if(!old&&!finance){const st=await settings(env);defaultDc=Math.max(0,int(st.default_delivery_cost_cents))}
+  const dc=finance?Math.max(0,int(b.delivery_cost_cents??old?.delivery_cost_cents)):Math.max(0,int(old?.delivery_cost_cents??defaultDc));
+  const oc=finance?Math.max(0,int(b.other_cost_cents??old?.other_cost_cents)):Math.max(0,int(old?.other_cost_cents??0));
   const total=Math.max(0,subtotal-disc+df+of),paid=Math.max(0,int(b.paid_amount_cents??old?.paid_amount_cents)),tcost=pcost+dc+oc,net=total-tcost,pay=paid<=0?"unpaid":paid>=total?"paid":"partial";
-  const od=s(b.order_date||old?.order_date||dateNow(),10),no=s(b.order_no||old?.order_no||await orderNo(env,od),50),ds=["待安排","已安排","配送中","已完成","取消"].includes(b.delivery_status)?b.delivery_status:(old?.delivery_status||"待安排"),status=["draft","confirmed","completed","cancelled"].includes(b.status)?b.status:(old?.status||"confirmed");
+  const od=s(b.order_date||old?.order_date||dateNow(),10),no=s(b.order_no||old?.order_no||await orderNo(env,od),50);
+  const ds=["待安排","已安排","配送中","已完成","取消"].includes(b.delivery_status)?b.delivery_status:(old?.delivery_status||"待安排");
+  const status=["draft","confirmed","completed","cancelled"].includes(b.status)?b.status:(old?.status||"confirmed");
+
+  const dup=await env.DB.prepare("SELECT id FROM orders WHERE order_no=? AND id<>? LIMIT 1").bind(no,id||"").first();
+  if(dup)throw bad("訂單編號已存在，請使用另一個編號");
+
   const q=[];
+  const orderId=id||crypto.randomUUID();
   if(id)q.push(env.DB.prepare(`UPDATE orders SET order_no=?,customer_id=?,order_date=?,delivery_date=?,delivery_slot=?,delivery_person=?,delivery_status=?,status=?,payment_status=?,payment_method=?,subtotal_cents=?,discount_cents=?,delivery_fee_cents=?,other_fee_cents=?,total_cents=?,paid_amount_cents=?,product_cost_cents=?,delivery_cost_cents=?,other_cost_cents=?,total_cost_cents=?,gross_profit_cents=?,net_profit_cents=?,notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`).bind(no,cid,od,s(b.delivery_date||old.delivery_date,10),s(b.delivery_slot||old.delivery_slot,80),s(b.delivery_person||old.delivery_person,80),ds,status,pay,s(b.payment_method||old.payment_method,50),subtotal,disc,df,of,total,paid,pcost,dc,oc,tcost,subtotal-disc-pcost,net,s(b.notes||old.notes,1000),id));
-  else{id=crypto.randomUUID();q.push(env.DB.prepare(`INSERT INTO orders(id,order_no,customer_id,order_date,delivery_date,delivery_slot,delivery_person,delivery_status,status,payment_status,payment_method,subtotal_cents,discount_cents,delivery_fee_cents,other_fee_cents,total_cents,paid_amount_cents,product_cost_cents,delivery_cost_cents,other_cost_cents,total_cost_cents,gross_profit_cents,net_profit_cents,notes,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(id,no,cid,od,s(b.delivery_date||"",10),s(b.delivery_slot||"",80),s(b.delivery_person||"",80),ds,status,pay,s(b.payment_method||"",50),subtotal,disc,df,of,total,paid,pcost,dc,oc,tcost,subtotal-disc-pcost,net,s(b.notes||"",1000),user.id))}
-  if(Array.isArray(b.items)){q.push(env.DB.prepare("DELETE FROM order_items WHERE order_id=?").bind(id));for(const x of items)q.push(env.DB.prepare("INSERT INTO order_items(id,order_id,product_id,product_name_snapshot,unit_snapshot,qty,unit_price_cents,unit_cost_cents,line_total_cents,line_cost_cents) VALUES(?,?,?,?,?,?,?,?,?,?)").bind(x.id,id,x.product_id,x.name,x.unit,x.qty,x.price,x.cost,x.total,x.linecost))}
-  await env.DB.batch(q);await audit(env,user.id,old?"UPDATE":"CREATE","order",id,old?{order_no:old.order_no,total_cents:old.total_cents}:null,{order_no:no,total_cents:total,net_profit_cents:net});
-  return {ok:true,id,order_no:no,total_cents:total,net_profit_cents:net,payment_status:pay};
+  else q.push(env.DB.prepare(`INSERT INTO orders(id,order_no,customer_id,order_date,delivery_date,delivery_slot,delivery_person,delivery_status,status,payment_status,payment_method,subtotal_cents,discount_cents,delivery_fee_cents,other_fee_cents,total_cents,paid_amount_cents,product_cost_cents,delivery_cost_cents,other_cost_cents,total_cost_cents,gross_profit_cents,net_profit_cents,notes,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(orderId,no,cid,od,s(b.delivery_date||"",10),s(b.delivery_slot||"",80),s(b.delivery_person||"",80),ds,status,pay,s(b.payment_method||"",50),subtotal,disc,df,of,total,paid,pcost,dc,oc,tcost,subtotal-disc-pcost,net,s(b.notes||"",1000),user.id));
+
+  if(Array.isArray(b.items)){
+    q.push(env.DB.prepare("DELETE FROM order_items WHERE order_id=?").bind(orderId));
+    for(const x of items) q.push(env.DB.prepare("INSERT INTO order_items(id,order_id,product_id,product_name_snapshot,unit_snapshot,qty,unit_price_cents,unit_cost_cents,line_total_cents,line_cost_cents) VALUES(?,?,?,?,?,?,?,?,?,?)").bind(x.id,orderId,x.product_id,x.name,x.unit,x.qty,x.price,x.cost,x.total,x.linecost));
+  }
+
+  const impacts=s=>s==="confirmed"||s==="completed";
+  const oldMap=new Map(),newMap=new Map();
+  if(old&&impacts(old.status)) for(const x of oldRows) if(x.product_id) oldMap.set(x.product_id,(oldMap.get(x.product_id)||0)+(+x.qty||0));
+  if(impacts(status)) for(const x of items) if(x.product_id) newMap.set(x.product_id,(newMap.get(x.product_id)||0)+(+x.qty||0));
+  const affected=new Set([...oldMap.keys(),...newMap.keys()]);
+  for(const pid of affected){
+    const delta=(oldMap.get(pid)||0)-(newMap.get(pid)||0);
+    if(Math.abs(delta)<1e-9)continue;
+    const p=await env.DB.prepare("SELECT id,name,track_stock,stock_qty FROM products WHERE id=?").bind(pid).first();
+    if(!p||!p.track_stock)continue;
+    const next=(+p.stock_qty||0)+delta;
+    if(next< -1e-9)throw bad(`「${p.name}」庫存不足，目前 ${(+p.stock_qty||0)}，此操作需要再扣 ${Math.abs(delta)}`);
+    q.push(env.DB.prepare("UPDATE products SET stock_qty=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(Math.max(0,next),pid));
+  }
+
+  await env.DB.batch(q);
+  await audit(env,user.id,old?"UPDATE":"CREATE","order",orderId,old?{order_no:old.order_no,total_cents:old.total_cents,status:old.status}:null,{order_no:no,total_cents:total,status,net_profit_cents:net});
+  const out={ok:true,id:orderId,order_no:no,total_cents:total,payment_status:pay};
+  if(can(user,"reports.read"))out.net_profit_cents=net;
+  return out;
 }
 
 async function currentUser(req,env){const t=cookie(req,COOKIE);if(!t)return null;return await env.DB.prepare(`SELECT u.id,u.name,u.email,u.role,u.access_role,u.permissions_json,u.account_status,u.investor_id,u.is_active,i.name investor_name,i.percentage investor_percentage
@@ -330,8 +433,9 @@ function parsePerms(v){if(Array.isArray(v))return v;try{const x=JSON.parse(v||"[
 function roleOf(u){return u.access_role||u.role||"viewer"}
 function validRole(v){return ["admin","staff","investor","viewer","customer"].includes(v)?v:"viewer"}
 function normalizePerms(v,role){if(role==="admin")return["*"];const a=Array.isArray(v)?v:ROLE_PERMISSIONS[role]||[];return [...new Set(a.filter(x=>KNOWN_PERMISSIONS.includes(x)))]}
-function can(u,p){const r=roleOf(u);if(r==="admin")return true;const a=parsePerms(u.permissions_json||u.permissions);return a.includes("*")||a.includes(p)}
+function can(u,p){const r=roleOf(u);if(r==="admin")return true;const a=parsePerms(u.permissions_json||u.permissions);if(a.includes("*")||a.includes(p))return true;return a.some(x=>(PERM_GRANTS[x]||[]).includes(p))}
 function need(u,p){if(!can(u,p))throw bad("沒有權限",403)}
+function hideOrderFinance(x){const y={...x};for(const k of ["product_cost_cents","delivery_cost_cents","other_cost_cents","total_cost_cents","gross_profit_cents","net_profit_cents"])delete y[k];return y}
 function safeUser(u){return{id:u.id,name:u.name,email:u.email,role:u.role,access_role:roleOf(u),permissions:parsePerms(u.permissions_json||u.permissions),account_status:u.account_status||"active",investor_id:u.investor_id||null,investor_name:u.investor_name||null,investor_percentage:+u.investor_percentage||0}}
 function admin(u){if(roleOf(u)!=="admin")throw bad("沒有權限",403)}function bad(msg,status=400){const e=new Error(msg);e.status=status;return e}function nf(){return j({ok:false,message:"找不到資料"},404)}
 function s(v,n=500){return String(v??"").trim().replace(/\0/g,"").slice(0,n)}function int(v){const n=Number(v);return Number.isFinite(n)?Math.round(n):0}function bool(v){return v===1||v==="1"||v===true?1:0}function nums(o){const x={};for(const[k,v]of Object.entries(o||{}))x[k]=/(_cents|count)$/.test(k)?+v||0:v;return x}
