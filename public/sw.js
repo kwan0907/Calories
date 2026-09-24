@@ -1,5 +1,5 @@
-const CACHE="crab-pos-shell-v4";
-const ASSETS=["/","/styles.css","/app.js","/config.js","/manifest.webmanifest","/icons/app-icon.png?v=4","/icons/icon.svg?v=4"];
+const CACHE="crab-pos-shell-v5";
+const ASSETS=["/","/styles.css","/app.js","/config.js","/manifest.webmanifest","/icons/app-icon.png?v=5","/icons/icon.svg?v=5"];
 self.addEventListener("install",e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)).then(()=>self.skipWaiting())));
 self.addEventListener("activate",e=>e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
 self.addEventListener("fetch",e=>{
