@@ -78,15 +78,31 @@ function shell(){
     ["customers","人","客戶",has("customers.read")],["products","盒","產品",has("products.read")],["expenses","$","支出",has("expenses.read")],["investors","%","投資者",has("investors.read")],
     ["reports","▥","報表",has("reports.read")],["users","🔐","帳戶",has("accounts.manage")],["audit","↺","操作紀錄",has("audit.read")],["settings","⚙","設定",has("settings.read")]
   ].filter(x=>x[3]);
-  $("#app").innerHTML=`<div class="app-shell"><aside class="sidebar"><div class="brand"><div class="brand-mark">蟹</div><div><div class="brand-title">${esc(S.settings.business_name||"蟹帳 POS")}</div><div class="brand-sub">獨立雲端 POS</div></div></div>
-    <nav class="nav">${nav.map(x=>`<button data-r="${x[0]}"><span>${x[1]}</span>${x[2]}</button>`).join("")}</nav></aside>
-    <main class="main"><header class="topbar"><div class="top-title">${esc(S.settings.business_name||"蟹帳 POS")}</div><div class="user-box"><span class="name">${esc(S.user.name)}</span><span class="role">${ROLE_LABELS[roleOf()]||esc(roleOf())}</span><button id="logout" class="btn small ghost">登出</button></div></header><section id="content" class="content"></section></main></div>`;
-  [...document.querySelectorAll(".nav button")].forEach(b=>b.onclick=()=>location.hash="#/"+b.dataset.r);
-  $("#logout").onclick=async()=>{try{await req("/api/auth/logout",{method:"POST"})}catch{}S.user=null;login()}
+  const primaryKeys=["dashboard","pos","orders","delivery","customers"],primary=primaryKeys.map(k=>nav.find(x=>x[0]===k)).filter(Boolean).slice(0,4);
+  $("#app").innerHTML=`<div class="app-shell">
+    <aside class="sidebar"><div class="brand"><div class="brand-mark">蟹</div><div><div class="brand-title">${esc(S.settings.business_name||"蟹帳 POS")}</div><div class="brand-sub">獨立雲端 POS</div></div></div>
+      <nav class="nav">${nav.map(x=>`<button data-r="${x[0]}"><span>${x[1]}</span>${x[2]}</button>`).join("")}</nav>
+    </aside>
+    <main class="main">
+      <header class="topbar"><div class="top-title">${esc(S.settings.business_name||"蟹帳 POS")}</div><div class="user-box"><span class="name">${esc(S.user.name)}</span><span class="role">${ROLE_LABELS[roleOf()]||esc(roleOf())}</span><button id="logout" class="btn small ghost">登出</button></div></header>
+      <header class="mobile-head"><div class="mobile-brand"><div class="brand-mark">蟹</div><div class="mobile-brand-text"><b>${esc(S.settings.business_name||"蟹帳 POS")}</b><span>${esc(S.user.name)} · ${ROLE_LABELS[roleOf()]||esc(roleOf())}</span></div></div><button id="mobileLogout" class="btn small ghost">登出</button></header>
+      <section id="content" class="content"></section>
+    </main>
+    <nav class="mobile-nav">${primary.map(x=>`<button data-r="${x[0]}"><span>${x[1]}</span><b>${x[2]}</b></button>`).join("")}<button id="moreNav"><span>⋯</span><b>更多</b></button></nav>
+    <div id="moreSheet" class="more-sheet" hidden><button id="moreBackdrop" class="more-backdrop" aria-label="關閉"></button><div class="more-panel"><div class="more-handle"></div><div class="more-head"><b>全部功能</b><button id="closeMore" class="btn small">×</button></div><div class="more-grid">${nav.map(x=>`<button data-r="${x[0]}"><span>${x[1]}</span><b>${x[2]}</b></button>`).join("")}</div></div></div>
+  </div>`;
+  const go=b=>{location.hash="#/"+b.dataset.r;closeMoreNav()};
+  [...document.querySelectorAll(".nav button,.mobile-nav button[data-r],.more-grid button[data-r]")].forEach(b=>b.onclick=()=>go(b));
+  const openMore=()=>{$("#moreSheet").hidden=false;document.body.classList.add("nav-sheet-open")};
+  const closeMoreNav=()=>{const s=$("#moreSheet");if(s)s.hidden=true;document.body.classList.remove("nav-sheet-open")};
+  $("#moreNav").onclick=openMore;$("#closeMore").onclick=closeMoreNav;$("#moreBackdrop").onclick=closeMoreNav;
+  const logout=async()=>{try{await req("/api/auth/logout",{method:"POST"})}catch{}S.user=null;login()};
+  $("#logout").onclick=logout;$("#mobileLogout").onclick=logout
 }
 function route(){
   const raw=(location.hash||"#/dashboard").replace(/^#\//,""),[r,q=""]=raw.split("?"),p=new URLSearchParams(q);
-  [...document.querySelectorAll(".nav button")].forEach(b=>b.classList.toggle("active",b.dataset.r===r));
+  [...document.querySelectorAll(".nav button,.mobile-nav button[data-r],.more-grid button[data-r]")].forEach(b=>b.classList.toggle("active",b.dataset.r===r));
+  $("#moreNav")?.classList.toggle("active",![...document.querySelectorAll(".mobile-nav button[data-r]")].some(b=>b.dataset.r===r));
   const map={dashboard,orders,delivery,customers,products,expenses,investors,reports,users,audit,settings,noaccess,pos:()=>pos(p.get("edit"))};
   (map[r]||noaccess)().catch(e=>{toast(e.message,"error");const box=$("#content");if(box)box.innerHTML=`<div class="empty">${esc(e.message)}</div>`})
 }
@@ -335,7 +351,11 @@ function manageUserModal(u,ins,after){
 }
 function accountBadge(s,on){const m={pending:"待審批",active:on?"已啟用":"已停用",rejected:"已拒絕"};return `<span class="badge ${s==="active"&&on?"done":s==="pending"?"partial":"unpaid"}">${m[s]||esc(s)}</span>`}
 async function audit(){
-  if(!has("audit.read"))return location.hash="#/"+homeRoute();const x=await req("/api/audit");$("#content").innerHTML=head("操作紀錄","建立、修改、審批及刪除紀錄")+`<div class=card>${table(["時間","人員","動作","類型","內容"],(x.logs||[]).map(l=>[esc(l.created_at),esc(l.user_name||"系統"),esc(auditActionLabel(l.action)),esc(auditEntityLabel(l.entity_type)),auditSummary(l)]))}</div>`
+  if(!has("audit.read"))return location.hash="#/"+homeRoute();
+  const x=await req("/api/audit"),logs=x.logs||[];
+  const desktop=table(["時間","人員","動作","類型","內容"],logs.map(l=>[esc(l.created_at),esc(l.user_name||"系統"),esc(auditActionLabel(l.action)),esc(auditEntityLabel(l.entity_type)),auditSummary(l)]));
+  const mobile=logs.length?`<div class="audit-mobile-list">${logs.map(l=>`<article class="audit-card"><div class="audit-meta"><span>${esc(l.created_at)}</span><b>${esc(l.user_name||"系統")}</b></div><div class="audit-tags"><span class="audit-action ${String(l.action||"").toLowerCase()}">${esc(auditActionLabel(l.action))}</span><span class="audit-type">${esc(auditEntityLabel(l.entity_type))}</span></div><div class="audit-summary">${auditSummary(l)}</div></article>`).join("")}</div>`:'<div class="empty">暫時沒有紀錄</div>';
+  $("#content").innerHTML=head("操作紀錄","建立、修改、審批及刪除紀錄")+`<div class="card audit-desktop">${desktop}</div><div class="audit-mobile">${mobile}</div>`
 }
 function safeJson(v){try{return JSON.parse(v||"{}")||{}}catch{return{}}}
 function auditActionLabel(x){return({CREATE:"建立",UPDATE:"修改",DELETE:"刪除",REGISTER:"申請",REVIEW:"審批"}[x]||x||"-")}
