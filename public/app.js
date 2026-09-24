@@ -154,7 +154,7 @@ async function orders(){
 }
 async function delivery(){
   if(!has("delivery.read")||!has("orders.read"))return location.hash="#/"+homeRoute();
-  const x=await req("/api/orders"),rows=(x.orders||[]).filter(o=>o.delivery_date&&["confirmed","completed"].includes(o.status)).sort((a,b)=>String(a.delivery_date).localeCompare(String(b.delivery_date)));
+  const x=await req("/api/orders?delivery_from="+today()),rows=(x.orders||[]).filter(o=>o.delivery_date&&["confirmed","completed"].includes(o.status)).sort((a,b)=>String(a.delivery_date).localeCompare(String(b.delivery_date)));
   $("#content").innerHTML=head("送貨","由訂單內管理日期、時段、配送員及狀態")+`<div class="card">${table(["日期","訂單","內容","配送","狀態",""],rows.map(o=>[`${esc(o.delivery_date)}<div class=muted>${esc(o.delivery_slot||"")}</div>`,esc(o.order_no),esc(o.item_summary||""),esc(o.delivery_person||"-"),badge(o.delivery_status),has("orders.write")?`<button class="btn small de" data-id="${o.id}">修改訂單</button>`:""]))}</div>`;$$(".de").forEach(b=>b.onclick=()=>location.hash="#/pos?edit="+b.dataset.id)
 }
 async function customers(){
