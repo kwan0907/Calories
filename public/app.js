@@ -210,9 +210,21 @@ async function orders(){
 }
 function deleteOrderModal(o,after){
   if(!o)return;
-  modal("刪除訂單",`<form id="deleteOrderForm"><div class="review-user"><b>${esc(o.order_no)}</b><span>總額 ${money(o.total_cents)}</span></div><div class=field><label>刪除原因（會保留在操作紀錄）</label><textarea name=reason placeholder="例如：測試單、重複訂單、客戶取消"></textarea></div><div class="help">刪除後不會從資料庫真正移除；報表、訂單及送貨頁會隱藏，相關庫存會自動回補。</div><div class="modal-savebar"><button type=button id=cancelDelete class=btn>取消</button><button class="btn danger">確認刪除</button></div></form>`);
+  modal("刪除訂單",`<div id="deleteOrderBox"><div class="review-user"><b>${esc(o.order_no)}</b><span>總額 ${money(o.total_cents)}</span></div><div class=field><label>刪除原因（會保留在操作紀錄）</label><textarea id=deleteReason placeholder="例如：測試單、重複訂單、客戶取消"></textarea></div><div class="help">刪除後不會從資料庫真正移除；報表、訂單及送貨頁會隱藏，相關庫存會自動回補。</div><div id=deleteStatus class="form-status"></div><div class="modal-savebar"><button type=button id=cancelDelete class=btn>取消</button><button type=button id=confirmDelete class="btn danger">確認刪除</button></div></div>`);
   $("#cancelDelete").onclick=closeModal;
-  $("#deleteOrderForm").onsubmit=async e=>{e.preventDefault();const f=obj(e);try{await req("/api/orders/"+encodeURIComponent(o.id),{method:"DELETE",body:{reason:f.reason||""}});closeModal();await after();toast("訂單已刪除；操作紀錄已保留","success")}catch(er){toast(er.message,"error")}}
+  $("#confirmDelete").onclick=async()=>{
+    const btn=$("#confirmDelete"),status=$("#deleteStatus"),reason=$("#deleteReason")?.value||"";
+    btn.disabled=true;btn.textContent="刪除中…";status.textContent="正在刪除訂單…";status.className="form-status";
+    try{
+      const x=await req("/api/orders/"+encodeURIComponent(o.id)+"/delete",{method:"POST",body:{reason}});
+      status.textContent=x.message||"已刪除";status.className="form-status success";
+      closeModal();await after();toast("訂單已刪除；操作紀錄已保留","success");
+    }catch(er){
+      console.error("DELETE_ORDER_FAILED",er);
+      status.textContent=er.message||"刪除失敗";status.className="form-status error";
+      btn.disabled=false;btn.textContent="確認刪除";toast(er.message||"刪除失敗","error");
+    }
+  }
 }
 async function delivery(){
   if(!has("delivery.read")||!has("orders.read"))return location.hash="#/"+homeRoute();
