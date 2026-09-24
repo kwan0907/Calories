@@ -225,7 +225,7 @@ async function api(req,env,u){
   mm=p.match(/^\/api\/investors\/([^/]+)$/);
   if(mm&&m==="PATCH"){
     need(user,"investors.write"); const id=mm[1],old=await env.DB.prepare("SELECT * FROM investors WHERE id=?").bind(id).first(); if(!old)return nf();
-    const b=await body(req),name=s(b.name??old.name,120),pct=Number(b.percentage??old.percentage),active=b.is_active===0||b.is_active==="0"?0:1,notes=s(b.notes??old.notes,1000);
+    const b=await body(req),name=s(b.name??old.name,120),pct=Number(b.percentage??old.percentage),active=b.is_active==null?(+old.is_active||0):(b.is_active===0||b.is_active==="0"?0:1),notes=s(b.notes??old.notes,1000);
     if(!name||!Number.isFinite(pct)||pct<0||pct>100)throw bad("名稱或比例不正確");
     if(active){const t=await env.DB.prepare("SELECT COALESCE(SUM(percentage),0) n FROM investors WHERE is_active=1 AND id<>?").bind(id).first();if((+t.n||0)+pct>100.0001)throw bad("啟用中的投資比例不可超過 100%")}
     await env.DB.prepare("UPDATE investors SET name=?,percentage=?,is_active=?,notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(name,pct,active,notes,id).run();
@@ -400,7 +400,7 @@ async function saveOrder(env,user,b,id){
 
   const q=[];
   const orderId=id||crypto.randomUUID();
-  if(id)q.push(env.DB.prepare(`UPDATE orders SET order_no=?,customer_id=?,order_date=?,delivery_date=?,delivery_slot=?,delivery_person=?,delivery_status=?,status=?,payment_status=?,payment_method=?,subtotal_cents=?,discount_cents=?,delivery_fee_cents=?,other_fee_cents=?,total_cents=?,paid_amount_cents=?,product_cost_cents=?,delivery_cost_cents=?,other_cost_cents=?,total_cost_cents=?,gross_profit_cents=?,net_profit_cents=?,notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`).bind(no,cid,od,s(b.delivery_date||old.delivery_date,10),s(b.delivery_slot||old.delivery_slot,80),s(b.delivery_person||old.delivery_person,80),ds,status,pay,s(b.payment_method||old.payment_method,50),subtotal,disc,df,of,total,paid,pcost,dc,oc,tcost,subtotal-disc-pcost,net,s(b.notes||old.notes,1000),id));
+  if(id)q.push(env.DB.prepare(`UPDATE orders SET order_no=?,customer_id=?,order_date=?,delivery_date=?,delivery_slot=?,delivery_person=?,delivery_status=?,status=?,payment_status=?,payment_method=?,subtotal_cents=?,discount_cents=?,delivery_fee_cents=?,other_fee_cents=?,total_cents=?,paid_amount_cents=?,product_cost_cents=?,delivery_cost_cents=?,other_cost_cents=?,total_cost_cents=?,gross_profit_cents=?,net_profit_cents=?,notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`).bind(no,cid,od,s(b.delivery_date??old.delivery_date,10),s(b.delivery_slot??old.delivery_slot,80),s(b.delivery_person??old.delivery_person,80),ds,status,pay,s(b.payment_method??old.payment_method,50),subtotal,disc,df,of,total,paid,pcost,dc,oc,tcost,subtotal-disc-pcost,net,s(b.notes??old.notes,1000),id));
   else q.push(env.DB.prepare(`INSERT INTO orders(id,order_no,customer_id,order_date,delivery_date,delivery_slot,delivery_person,delivery_status,status,payment_status,payment_method,subtotal_cents,discount_cents,delivery_fee_cents,other_fee_cents,total_cents,paid_amount_cents,product_cost_cents,delivery_cost_cents,other_cost_cents,total_cost_cents,gross_profit_cents,net_profit_cents,notes,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(orderId,no,cid,od,s(b.delivery_date||"",10),s(b.delivery_slot||"",80),s(b.delivery_person||"",80),ds,status,pay,s(b.payment_method||"",50),subtotal,disc,df,of,total,paid,pcost,dc,oc,tcost,subtotal-disc-pcost,net,s(b.notes||"",1000),user.id));
 
   if(Array.isArray(b.items)){
