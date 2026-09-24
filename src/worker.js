@@ -128,11 +128,11 @@ async function api(req,env,u){
   }
   let mm=p.match(/^\/api\/products\/([^/]+)$/);
   if(mm&&m==="PATCH"){
-    need(user,"products.write"); const id=mm[1],old=await env.DB.prepare("SELECT * FROM products WHERE id=?").bind(id).first(); if(!old)return nf();
-    const x=product({...old,...await body(req)}),q=[env.DB.prepare(`UPDATE products SET sku=?,category=?,name=?,unit=?,cost_cents=?,sale_price_cents=?,track_stock=?,stock_qty=?,is_active=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
-      .bind(x.sku,x.category,x.name,x.unit,x.cost_cents,x.sale_price_cents,x.track_stock,x.stock_qty,x.is_active,id)];
-    if(+old.cost_cents!==x.cost_cents) q.push(env.DB.prepare("INSERT INTO product_cost_history(id,product_id,cost_cents,changed_by) VALUES(?,?,?,?)").bind(crypto.randomUUID(),id,x.cost_cents,user.id));
-    await env.DB.batch(q); await audit(env,user.id,"UPDATE","product",id,old,x); return j({ok:true});
+    need(user,"products.write"); return j(await saveProduct(env,user,mm[1],await body(req)));
+  }
+  mm=p.match(/^\/api\/products\/([^/]+)\/save$/);
+  if(mm&&m==="POST"){
+    need(user,"products.write"); return j(await saveProduct(env,user,mm[1],await body(req)));
   }
 
   if(p==="/api/customers"&&m==="GET"){
@@ -323,6 +323,17 @@ async function api(req,env,u){
   }
 
   return nf();
+}
+
+async function saveProduct(env,user,id,b){
+  const old=await env.DB.prepare("SELECT * FROM products WHERE id=?").bind(id).first();
+  if(!old)throw bad("找不到產品",404);
+  const x=product({...old,...b}),q=[env.DB.prepare(`UPDATE products SET sku=?,category=?,name=?,unit=?,cost_cents=?,sale_price_cents=?,track_stock=?,stock_qty=?,is_active=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+    .bind(x.sku,x.category,x.name,x.unit,x.cost_cents,x.sale_price_cents,x.track_stock,x.stock_qty,x.is_active,id)];
+  if(+old.cost_cents!==x.cost_cents) q.push(env.DB.prepare("INSERT INTO product_cost_history(id,product_id,cost_cents,changed_by) VALUES(?,?,?,?)").bind(crypto.randomUUID(),id,x.cost_cents,user.id));
+  await env.DB.batch(q);
+  await audit(env,user.id,"UPDATE","product",id,old,x);
+  return {ok:true,id};
 }
 
 async function softDeleteOrder(env,user,id,b={}){
