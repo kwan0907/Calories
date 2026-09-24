@@ -84,17 +84,17 @@ async function api(req,env,u){
     const [t,mo,te,me,top,del]=await Promise.all([
       env.DB.prepare(`SELECT COUNT(*) order_count,COALESCE(SUM(total_cents),0) revenue_cents,COALESCE(SUM(net_profit_cents),0) order_profit_cents,
         COALESCE(SUM(CASE WHEN total_cents>paid_amount_cents THEN total_cents-paid_amount_cents ELSE 0 END),0) unpaid_cents
-        FROM orders WHERE order_date=? AND status!='cancelled'`).bind(today).first(),
+        FROM orders WHERE order_date=? AND status IN ('confirmed','completed')`).bind(today).first(),
       env.DB.prepare(`SELECT COUNT(*) order_count,COALESCE(SUM(total_cents),0) revenue_cents,COALESCE(SUM(net_profit_cents),0) order_profit_cents,
         COALESCE(SUM(CASE WHEN total_cents>paid_amount_cents THEN total_cents-paid_amount_cents ELSE 0 END),0) unpaid_cents
-        FROM orders WHERE order_date BETWEEN ? AND ? AND status!='cancelled'`).bind(start,today).first(),
+        FROM orders WHERE order_date BETWEEN ? AND ? AND status IN ('confirmed','completed')`).bind(start,today).first(),
       env.DB.prepare("SELECT COALESCE(SUM(amount_cents),0) n FROM expenses WHERE expense_date=?").bind(today).first(),
       env.DB.prepare("SELECT COALESCE(SUM(amount_cents),0) n FROM expenses WHERE expense_date BETWEEN ? AND ?").bind(start,today).first(),
       env.DB.prepare(`SELECT oi.product_name_snapshot name,SUM(oi.qty) qty,SUM(oi.line_total_cents) sales_cents
-        FROM order_items oi JOIN orders o ON o.id=oi.order_id WHERE o.order_date BETWEEN ? AND ? AND o.status!='cancelled'
+        FROM order_items oi JOIN orders o ON o.id=oi.order_id WHERE o.order_date BETWEEN ? AND ? AND o.status IN ('confirmed','completed')
         GROUP BY oi.product_name_snapshot ORDER BY sales_cents DESC LIMIT 5`).bind(start,today).all(),
       env.DB.prepare(`SELECT id,order_no,delivery_date,delivery_slot,delivery_person,delivery_status,total_cents
-        FROM orders WHERE delivery_date>=? AND status!='cancelled' AND delivery_status!='已完成' ORDER BY delivery_date LIMIT 10`).bind(today).all()
+        FROM orders WHERE delivery_date>=? AND status IN ('confirmed','completed') AND delivery_status!='已完成' ORDER BY delivery_date LIMIT 10`).bind(today).all()
     ]);
     const out={ok:true,today:{...nums(t),expense_cents:+te.n||0,net_profit_cents:(+t.order_profit_cents||0)-(+te.n||0)},
       month:{...nums(mo),expense_cents:+me.n||0,net_profit_cents:(+mo.order_profit_cents||0)-(+me.n||0)},
@@ -137,10 +137,10 @@ async function api(req,env,u){
   if(p==="/api/customers"&&m==="GET"){
     need(user,"customers.read"); const q=s(u.searchParams.get("q")||"",100),like="%"+q+"%",pii=can(user,"customers.pii");
     const sql=pii
-      ? `SELECT c.*,COUNT(o.id) order_count,COALESCE(SUM(CASE WHEN o.status!='cancelled' THEN o.total_cents ELSE 0 END),0) lifetime_value_cents
+      ? `SELECT c.*,COALESCE(SUM(CASE WHEN o.status IN ('confirmed','completed') THEN 1 ELSE 0 END),0) order_count,COALESCE(SUM(CASE WHEN o.status IN ('confirmed','completed') THEN o.total_cents ELSE 0 END),0) lifetime_value_cents
          FROM customers c LEFT JOIN orders o ON o.customer_id=c.id WHERE (?='' OR c.name LIKE ? OR c.phone LIKE ?)
          GROUP BY c.id ORDER BY c.updated_at DESC LIMIT 200`
-      : `SELECT c.*,COUNT(o.id) order_count,COALESCE(SUM(CASE WHEN o.status!='cancelled' THEN o.total_cents ELSE 0 END),0) lifetime_value_cents
+      : `SELECT c.*,COALESCE(SUM(CASE WHEN o.status IN ('confirmed','completed') THEN 1 ELSE 0 END),0) order_count,COALESCE(SUM(CASE WHEN o.status IN ('confirmed','completed') THEN o.total_cents ELSE 0 END),0) lifetime_value_cents
          FROM customers c LEFT JOIN orders o ON o.customer_id=c.id WHERE (?='' OR c.name LIKE ?)
          GROUP BY c.id ORDER BY c.updated_at DESC LIMIT 200`;
     const r=pii?await env.DB.prepare(sql).bind(q,like,like).all():await env.DB.prepare(sql).bind(q,like).all();
@@ -292,12 +292,12 @@ async function api(req,env,u){
       env.DB.prepare(`SELECT COUNT(*) order_count,COALESCE(SUM(total_cents),0) revenue_cents,COALESCE(SUM(product_cost_cents),0) product_cost_cents,
         COALESCE(SUM(net_profit_cents),0) order_profit_cents,COALESCE(SUM(paid_amount_cents),0) paid_cents,
         COALESCE(SUM(CASE WHEN total_cents>paid_amount_cents THEN total_cents-paid_amount_cents ELSE 0 END),0) outstanding_cents
-        FROM orders WHERE order_date BETWEEN ? AND ? AND status!='cancelled'`).bind(from,to).first(),
+        FROM orders WHERE order_date BETWEEN ? AND ? AND status IN ('confirmed','completed')`).bind(from,to).first(),
       env.DB.prepare("SELECT COALESCE(SUM(amount_cents),0) expense_cents FROM expenses WHERE expense_date BETWEEN ? AND ?").bind(from,to).first(),
       env.DB.prepare(`SELECT order_date date,COUNT(*) orders,SUM(total_cents) revenue_cents,SUM(net_profit_cents) order_profit_cents FROM orders
-        WHERE order_date BETWEEN ? AND ? AND status!='cancelled' GROUP BY order_date ORDER BY order_date`).bind(from,to).all(),
+        WHERE order_date BETWEEN ? AND ? AND status IN ('confirmed','completed') GROUP BY order_date ORDER BY order_date`).bind(from,to).all(),
       env.DB.prepare(`SELECT oi.product_name_snapshot name,SUM(oi.qty) qty,SUM(oi.line_total_cents) sales_cents,SUM(oi.line_cost_cents) cost_cents
-        FROM order_items oi JOIN orders o ON o.id=oi.order_id WHERE o.order_date BETWEEN ? AND ? AND o.status!='cancelled'
+        FROM order_items oi JOIN orders o ON o.id=oi.order_id WHERE o.order_date BETWEEN ? AND ? AND o.status IN ('confirmed','completed')
         GROUP BY oi.product_name_snapshot ORDER BY sales_cents DESC`).bind(from,to).all()
     ]);
     const sum={...nums(o),expense_cents:+e.expense_cents||0};sum.net_profit_cents=sum.order_profit_cents-sum.expense_cents;
