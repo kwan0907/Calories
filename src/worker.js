@@ -162,8 +162,8 @@ async function api(req,env,u){
 
   if(p==="/api/orders"&&m==="GET"){
     need(user,"orders.read");
-    const q=s(u.searchParams.get("q")||"",80),from=s(u.searchParams.get("from")||"",10),to=s(u.searchParams.get("to")||"",10),pay=s(u.searchParams.get("payment")||"",20);
-    const w=["1=1"],a=[]; if(from){w.push("o.order_date>=?");a.push(from)} if(to){w.push("o.order_date<=?");a.push(to)} if(pay){w.push("o.payment_status=?");a.push(pay)}
+    const q=s(u.searchParams.get("q")||"",80),from=s(u.searchParams.get("from")||"",10),to=s(u.searchParams.get("to")||"",10),pay=s(u.searchParams.get("payment")||"",20),deliveryFrom=s(u.searchParams.get("delivery_from")||"",10);
+    const w=["1=1"],a=[]; if(from){w.push("o.order_date>=?");a.push(from)} if(to){w.push("o.order_date<=?");a.push(to)} if(pay){w.push("o.payment_status=?");a.push(pay)} if(deliveryFrom){w.push("o.delivery_date>=?");a.push(deliveryFrom)}
     if(q){if(can(user,"customers.pii")){w.push("(o.order_no LIKE ? OR c.name LIKE ? OR c.phone LIKE ?)");a.push("%"+q+"%","%"+q+"%","%"+q+"%")}else{w.push("o.order_no LIKE ?");a.push("%"+q+"%")}}
     const pii=can(user,"customers.pii")?",c.name customer_name,c.phone customer_phone,c.address customer_address":"";
     const r=await env.DB.prepare(`SELECT o.* ${pii},GROUP_CONCAT(oi.product_name_snapshot||' ×'||printf('%g',oi.qty),'、') item_summary
