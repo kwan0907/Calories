@@ -1,4 +1,4 @@
-const CACHE="crab-pos-shell-v12";
+const CACHE="crab-pos-shell-v13";
 const SHELL=["/","/styles.css","/app.js","/config.js"];
 const STATIC=["/manifest.webmanifest","/icons/app-icon.png?v=5","/icons/icon.svg?v=5"];
 const ASSETS=[...SHELL,...STATIC];
