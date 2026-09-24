@@ -274,7 +274,7 @@ async function api(req,env,u){
     need(user,"settings.read"); const x=await settings(env); return j({ok:true,settings:x});
   }
   if(p==="/api/settings"&&m==="PATCH"){
-    need(user,"settings.write"); const b=await body(req),allow=["business_name","currency","order_prefix","default_delivery_cost_cents"],q=[];
+    need(user,"settings.write"); const b=await body(req),allow=["business_name","currency","order_prefix","default_delivery_cost_cents","customer_delivery_fee_cents","free_shipping_threshold_cents","free_shipping_basis"],q=[];
     for(const k of allow) if(k in b) q.push(env.DB.prepare(`INSERT INTO settings(key,value,updated_at) VALUES(?,?,CURRENT_TIMESTAMP)
       ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=CURRENT_TIMESTAMP`).bind(k,String(b[k])));
     if(q.length)await env.DB.batch(q); await audit(env,user.id,"UPDATE","settings","global",null,b); return j({ok:true});
@@ -384,14 +384,28 @@ async function saveOrder(env,user,b,id){
     items=oldRows.map(x=>({id:x.id,product_id:x.product_id,name:x.product_name_snapshot,unit:x.unit_snapshot,qty:+x.qty,price:+x.unit_price_cents,cost:+x.unit_cost_cents,total:+x.line_total_cents,linecost:+x.line_cost_cents}));
   }
 
-  const subtotal=items.reduce((a,x)=>a+x.total,0),pcost=items.reduce((a,x)=>a+x.linecost,0);
-  const disc=Math.max(0,int(b.discount_cents??old?.discount_cents)),df=Math.max(0,int(b.delivery_fee_cents??old?.delivery_fee_cents)),of=Math.max(0,int(b.other_fee_cents??old?.other_fee_cents));
+  const subtotal=items.reduce((a,x)=>a+x.total,0),pcost=items.reduce((a,x)=>a+x.linecost,0),st=await settings(env);
+  const discountPct=Number(b.discount_percent);
+  const disc=Number.isFinite(discountPct)&&discountPct>=0&&discountPct<=100
+    ?Math.min(subtotal,Math.round(subtotal*discountPct/100))
+    :Math.min(subtotal,Math.max(0,int(b.discount_cents??old?.discount_cents)));
+  const discountedSubtotal=Math.max(0,subtotal-disc);
+  const standardDeliveryFee=Math.max(0,int(st.customer_delivery_fee_cents||0));
+  const freeThreshold=Math.max(0,int(st.free_shipping_threshold_cents||0));
+  const freeBasis=st.free_shipping_basis==="subtotal"?"subtotal":"discounted";
+  const freeBasisValue=freeBasis==="subtotal"?subtotal:discountedSubtotal;
+  const shippingMode=["auto","free","custom"].includes(b.shipping_mode)?b.shipping_mode:null;
+  let df;
+  if(shippingMode==="auto") df=freeThreshold>0&&freeBasisValue>=freeThreshold?0:standardDeliveryFee;
+  else if(shippingMode==="free") df=0;
+  else if(shippingMode==="custom") df=Math.max(0,int(b.delivery_fee_cents));
+  else df=Math.max(0,int(b.delivery_fee_cents??old?.delivery_fee_cents));
+  const of=Math.max(0,int(b.other_fee_cents??old?.other_fee_cents));
   const finance=can(user,"reports.read")||can(user,"products.write");
-  let defaultDc=0;
-  if(!old&&!finance){const st=await settings(env);defaultDc=Math.max(0,int(st.default_delivery_cost_cents))}
-  const dc=finance?Math.max(0,int(b.delivery_cost_cents??old?.delivery_cost_cents)):Math.max(0,int(old?.delivery_cost_cents??defaultDc));
+  const defaultDc=Math.max(0,int(st.default_delivery_cost_cents||0));
+  const dc=finance?Math.max(0,int(b.delivery_cost_cents??old?.delivery_cost_cents??defaultDc)):Math.max(0,int(old?.delivery_cost_cents??defaultDc));
   const oc=finance?Math.max(0,int(b.other_cost_cents??old?.other_cost_cents)):Math.max(0,int(old?.other_cost_cents??0));
-  const total=Math.max(0,subtotal-disc+df+of),paid=Math.max(0,int(b.paid_amount_cents??old?.paid_amount_cents)),tcost=pcost+dc+oc,net=total-tcost,pay=paid<=0?"unpaid":paid>=total?"paid":"partial";
+  const total=Math.max(0,discountedSubtotal+df+of),paid=Math.max(0,int(b.paid_amount_cents??old?.paid_amount_cents)),tcost=pcost+dc+oc,net=total-tcost,pay=paid<=0?"unpaid":paid>=total?"paid":"partial";
   const od=s(b.order_date||old?.order_date||dateNow(),10),no=s(b.order_no||old?.order_no||await orderNo(env,od),50);
   const ds=["待安排","已安排","配送中","已完成","取消"].includes(b.delivery_status)?b.delivery_status:(old?.delivery_status||"待安排");
   const status=["draft","confirmed","completed","cancelled"].includes(b.status)?b.status:(old?.status||"confirmed");
