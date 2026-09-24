@@ -239,7 +239,27 @@ async function customers(){
 function customerModal(c,after){modal(c?"修改客戶":"新增客戶",`<form id="mf">${field("姓名","name","text",c?.name||"")}${field("電話","phone","text",c?.phone||"")}${field("地址","address","text",c?.address||"")}<div class=field><label>備註</label><textarea name=notes>${esc(c?.notes||"")}</textarea></div><button class="btn primary">儲存</button></form>`);$("#mf").onsubmit=async e=>{e.preventDefault();try{await req(c?"/api/customers/"+c.id:"/api/customers",{method:c?"PATCH":"POST",body:obj(e)});closeModal();await after();toast("已儲存","success")}catch(er){toast(er.message,"error")}}}
 async function products(){
   if(!has("products.read"))return location.hash="#/"+homeRoute();const a=has("products.write"),finance=has("reports.read")||a,ps=await getProducts(a),headers=["產品","分類","售價"],rows=ps.map(p=>[`<b>${esc(p.name)}</b><div class=muted>${esc(p.sku||"")}</div>`,esc(p.category),money(p.sale_price_cents)]);if(finance){headers.push("成本","毛利");rows.forEach((r,i)=>{const p=ps[i];r.push(money(p.cost_cents),money((+p.sale_price_cents||0)-(+p.cost_cents||0)))})}headers.push("庫存","狀態","");rows.forEach((r,i)=>{const p=ps[i];r.push(p.track_stock?num(p.stock_qty)+" "+esc(p.unit):"不追蹤",p.is_active?"上架":"停用",a?`<button class="btn small pe" data-id="${p.id}">修改</button>`:"")});$("#content").innerHTML=head("產品","售價、成本、分類及庫存",a?'<button id="add" class="btn primary">＋ 產品</button>':"")+`<div class=card>${table(headers,rows)}</div>`;if(a){$("#add").onclick=()=>productModal(null,()=>products());[...document.querySelectorAll(".pe")].forEach(b=>b.onclick=()=>productModal(ps.find(p=>p.id===b.dataset.id),()=>products()))}}
-function productModal(p,after){modal(p?"修改產品":"新增產品",`<form id=mf><div class=form-grid><div class=span2>${inp("產品名稱","name",p?.name||"")}</div><div>${inp("分類","category",p?.category||"其他")}</div><div>${inp("SKU","sku",p?.sku||"")}</div><div>${inp("單位","unit",p?.unit||"隻")}</div><div>${moneyInp("成本","cost",p?.cost_cents)}</div><div>${moneyInp("售價","price",p?.sale_price_cents)}</div><div>${`<label>庫存</label><input name="stock_qty" type="number" min="0" step=".01" value="${attr(p?.stock_qty??0)}">`}</div><div>${sel("追蹤庫存","track_stock",[["0","否"],["1","是"]],String(p?.track_stock||0))}</div><div>${sel("狀態","is_active",[["1","上架"],["0","停用"]],String(p?.is_active??1))}</div></div><button class="btn primary">儲存</button></form>`);$("#mf").onsubmit=async e=>{e.preventDefault();const f=obj(e),b={...f,cost_cents:cents(f.cost),sale_price_cents:cents(f.price),stock_qty:+f.stock_qty||0,track_stock:+f.track_stock,is_active:+f.is_active};try{await req(p?"/api/products/"+p.id:"/api/products",{method:p?"PATCH":"POST",body:b});closeModal();await after();toast("產品已儲存","success")}catch(er){toast(er.message,"error")}}}
+function productModal(p,after){
+  modal(p?"修改產品":"新增產品",`<div id=productEditor><div class=form-grid><div class=span2>${inp("產品名稱","name",p?.name||"")}</div><div>${inp("分類","category",p?.category||"其他")}</div><div>${inp("SKU","sku",p?.sku||"")}</div><div>${inp("單位","unit",p?.unit||"隻")}</div><div>${moneyInp("成本","cost",p?.cost_cents)}</div><div>${moneyInp("售價","price",p?.sale_price_cents)}</div><div>${`<label>庫存</label><input name="stock_qty" type="number" min="0" step=".01" value="${attr(p?.stock_qty??0)}">`}</div><div>${sel("追蹤庫存","track_stock",[["0","否"],["1","是"]],String(p?.track_stock||0))}</div><div>${sel("狀態","is_active",[["1","上架"],["0","停用"]],String(p?.is_active??1))}</div></div><div id=productStatus class="form-status"></div><div class="modal-savebar"><button type=button id=productCancel class=btn>取消</button><button type=button id=productSave class="btn primary">儲存產品</button></div></div>`);
+  $("#productCancel").onclick=closeModal;
+  $("#productSave").onclick=async()=>{
+    const box=$("#productEditor"),btn=$("#productSave"),status=$("#productStatus");
+    const f=Object.fromEntries(new FormData(box.closest(".modal").querySelector("#productEditor")?.querySelector("form")||document.createElement("form")));
+    const get=n=>box.querySelector('[name="'+n+'"]')?.value??"";
+    const b={name:get("name"),category:get("category"),sku:get("sku"),unit:get("unit"),cost_cents:cents(get("cost")),sale_price_cents:cents(get("price")),stock_qty:+get("stock_qty")||0,track_stock:+get("track_stock"),is_active:+get("is_active")};
+    if(!b.name.trim()){status.textContent="產品名稱必填";status.className="form-status error";return}
+    btn.disabled=true;btn.textContent="儲存中…";status.textContent="正在儲存產品…";status.className="form-status";
+    try{
+      await req(p?"/api/products/"+encodeURIComponent(p.id)+"/save":"/api/products",{method:"POST",body:b});
+      status.textContent="已儲存";status.className="form-status success";
+      closeModal();await after();toast("產品已儲存","success");
+    }catch(er){
+      console.error("PRODUCT_SAVE_FAILED",er);
+      status.textContent=er.message||"儲存失敗";status.className="form-status error";
+      btn.disabled=false;btn.textContent="儲存產品";toast(er.message||"儲存失敗","error");
+    }
+  }
+}
 async function expenses(){
   if(!has("expenses.read"))return location.hash="#/"+homeRoute();const a=has("expenses.write"),from=today().slice(0,7)+"-01",x=await req("/api/expenses?from="+from+"&to="+today()),items=x.expenses||[];$("#content").innerHTML=head("支出","營運支出會從報表淨利扣除",a?'<button id="add" class="btn primary">＋ 支出</button>':"")+`<div class=card>${table(["日期","類型","說明","金額","備註",""],items.map(e=>[esc(e.expense_date),esc(e.type),esc(e.description),money(e.amount_cents),esc(e.notes||""),a?`<button class="btn small xe" data-id="${e.id}">修改</button>`:""]))}</div>`;if(a){$("#add").onclick=()=>expenseModal(null,()=>expenses());[...document.querySelectorAll(".xe")].forEach(b=>b.onclick=()=>expenseModal(items.find(x=>x.id===b.dataset.id),()=>expenses()))}
 }
