@@ -188,21 +188,12 @@ async function api(req,env,u){
   if(mm&&m==="PATCH"){need(user,"orders.write");return j(await saveOrder(env,user,await body(req),mm[1]))}
   if(mm&&m==="DELETE"){
     need(user,"orders.delete");
-    const id=mm[1],old=await env.DB.prepare("SELECT * FROM orders WHERE id=? AND deleted_at IS NULL").bind(id).first(); if(!old)return nf();
-    const b=await body(req),reason=s(b.reason||"",300);
-    const rows=(await env.DB.prepare("SELECT product_id,qty,product_name_snapshot FROM order_items WHERE order_id=?").bind(id).all()).results||[];
-    const q=[];
-    if(old.status==="confirmed"||old.status==="completed"){
-      for(const x of rows){
-        if(!x.product_id)continue;
-        const p=await env.DB.prepare("SELECT id,track_stock,stock_qty FROM products WHERE id=?").bind(x.product_id).first();
-        if(p?.track_stock) q.push(env.DB.prepare("UPDATE products SET stock_qty=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind((+p.stock_qty||0)+(+x.qty||0),p.id));
-      }
-    }
-    q.push(env.DB.prepare("UPDATE orders SET deleted_at=CURRENT_TIMESTAMP,deleted_by=?,delete_reason=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(user.id,reason,id));
-    await env.DB.batch(q);
-    await audit(env,user.id,"DELETE","order",id,{order_no:old.order_no,total_cents:old.total_cents,status:old.status},{order_no:old.order_no,total_cents:old.total_cents,reason});
-    return j({ok:true,message:"訂單已刪除並保留操作紀錄"});
+    return j(await softDeleteOrder(env,user,mm[1],await body(req)));
+  }
+  mm=p.match(/^\/api\/orders\/([^/]+)\/delete$/);
+  if(mm&&m==="POST"){
+    need(user,"orders.delete");
+    return j(await softDeleteOrder(env,user,mm[1],await body(req)));
   }
 
   if(p==="/api/expenses"&&m==="GET"){
@@ -332,6 +323,25 @@ async function api(req,env,u){
   }
 
   return nf();
+}
+
+async function softDeleteOrder(env,user,id,b={}){
+  const old=await env.DB.prepare("SELECT * FROM orders WHERE id=? AND deleted_at IS NULL").bind(id).first();
+  if(!old)throw bad("找不到訂單，可能已經刪除",404);
+  const reason=s(b.reason||"",300);
+  const rows=(await env.DB.prepare("SELECT product_id,qty,product_name_snapshot FROM order_items WHERE order_id=?").bind(id).all()).results||[];
+  const q=[];
+  if(old.status==="confirmed"||old.status==="completed"){
+    for(const x of rows){
+      if(!x.product_id)continue;
+      const p=await env.DB.prepare("SELECT id,track_stock,stock_qty FROM products WHERE id=?").bind(x.product_id).first();
+      if(p?.track_stock) q.push(env.DB.prepare("UPDATE products SET stock_qty=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind((+p.stock_qty||0)+(+x.qty||0),p.id));
+    }
+  }
+  q.push(env.DB.prepare("UPDATE orders SET deleted_at=CURRENT_TIMESTAMP,deleted_by=?,delete_reason=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND deleted_at IS NULL").bind(user.id,reason,id));
+  await env.DB.batch(q);
+  await audit(env,user.id,"DELETE","order",id,{order_no:old.order_no,total_cents:old.total_cents,status:old.status},{order_no:old.order_no,total_cents:old.total_cents,reason});
+  return {ok:true,message:"訂單已刪除並保留操作紀錄",id,order_no:old.order_no};
 }
 
 async function createFirstAdmin(env,b){
