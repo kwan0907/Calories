@@ -6,7 +6,7 @@ const ROLE_PERMISSIONS={
   viewer:["dashboard","orders.read","products.read","reports.read"],
   customer:[]
 };
-const KNOWN_PERMISSIONS=["dashboard","orders.read","orders.write","delivery.read","customers.read","customers.write","customers.pii","products.read","products.write","expenses.read","expenses.write","investors.read","investors.write","reports.read","accounts.manage","audit.read","settings.read","settings.write","export.orders"];
+const KNOWN_PERMISSIONS=["dashboard","orders.read","orders.write","orders.delete","delivery.read","customers.read","customers.write","customers.pii","products.read","products.write","expenses.read","expenses.write","investors.read","investors.write","reports.read","accounts.manage","audit.read","settings.read","settings.write","export.orders"];
 const PERM_GRANTS={
   "orders.write":["orders.read","products.read","delivery.read","customers.read","customers.write","customers.pii"],
   "customers.write":["customers.read","customers.pii"],
@@ -84,17 +84,17 @@ async function api(req,env,u){
     const [t,mo,te,me,top,del]=await Promise.all([
       env.DB.prepare(`SELECT COUNT(*) order_count,COALESCE(SUM(total_cents),0) revenue_cents,COALESCE(SUM(net_profit_cents),0) order_profit_cents,
         COALESCE(SUM(CASE WHEN total_cents>paid_amount_cents THEN total_cents-paid_amount_cents ELSE 0 END),0) unpaid_cents
-        FROM orders WHERE order_date=? AND status IN ('confirmed','completed')`).bind(today).first(),
+        FROM orders WHERE deleted_at IS NULL AND order_date=? AND status IN ('confirmed','completed')`).bind(today).first(),
       env.DB.prepare(`SELECT COUNT(*) order_count,COALESCE(SUM(total_cents),0) revenue_cents,COALESCE(SUM(net_profit_cents),0) order_profit_cents,
         COALESCE(SUM(CASE WHEN total_cents>paid_amount_cents THEN total_cents-paid_amount_cents ELSE 0 END),0) unpaid_cents
-        FROM orders WHERE order_date BETWEEN ? AND ? AND status IN ('confirmed','completed')`).bind(start,today).first(),
+        FROM orders WHERE deleted_at IS NULL AND order_date BETWEEN ? AND ? AND status IN ('confirmed','completed')`).bind(start,today).first(),
       env.DB.prepare("SELECT COALESCE(SUM(amount_cents),0) n FROM expenses WHERE expense_date=?").bind(today).first(),
       env.DB.prepare("SELECT COALESCE(SUM(amount_cents),0) n FROM expenses WHERE expense_date BETWEEN ? AND ?").bind(start,today).first(),
       env.DB.prepare(`SELECT oi.product_name_snapshot name,SUM(oi.qty) qty,SUM(oi.line_total_cents) sales_cents
-        FROM order_items oi JOIN orders o ON o.id=oi.order_id WHERE o.order_date BETWEEN ? AND ? AND o.status IN ('confirmed','completed')
+        FROM order_items oi JOIN orders o ON o.id=oi.order_id WHERE o.deleted_at IS NULL AND o.order_date BETWEEN ? AND ? AND o.status IN ('confirmed','completed')
         GROUP BY oi.product_name_snapshot ORDER BY sales_cents DESC LIMIT 5`).bind(start,today).all(),
       env.DB.prepare(`SELECT id,order_no,delivery_date,delivery_slot,delivery_person,delivery_status,total_cents
-        FROM orders WHERE delivery_date>=? AND status IN ('confirmed','completed') AND delivery_status!='已完成' ORDER BY delivery_date LIMIT 10`).bind(today).all()
+        FROM orders WHERE deleted_at IS NULL AND delivery_date>=? AND status IN ('confirmed','completed') AND delivery_status!='已完成' ORDER BY delivery_date LIMIT 10`).bind(today).all()
     ]);
     const out={ok:true,today:{...nums(t),expense_cents:+te.n||0,net_profit_cents:(+t.order_profit_cents||0)-(+te.n||0)},
       month:{...nums(mo),expense_cents:+me.n||0,net_profit_cents:(+mo.order_profit_cents||0)-(+me.n||0)},
@@ -138,10 +138,10 @@ async function api(req,env,u){
     need(user,"customers.read"); const q=s(u.searchParams.get("q")||"",100),like="%"+q+"%",pii=can(user,"customers.pii");
     const sql=pii
       ? `SELECT c.*,COALESCE(SUM(CASE WHEN o.status IN ('confirmed','completed') THEN 1 ELSE 0 END),0) order_count,COALESCE(SUM(CASE WHEN o.status IN ('confirmed','completed') THEN o.total_cents ELSE 0 END),0) lifetime_value_cents
-         FROM customers c LEFT JOIN orders o ON o.customer_id=c.id WHERE (?='' OR c.name LIKE ? OR c.phone LIKE ?)
+         FROM customers c LEFT JOIN orders o ON o.customer_id=c.id AND o.deleted_at IS NULL WHERE (?='' OR c.name LIKE ? OR c.phone LIKE ?)
          GROUP BY c.id ORDER BY c.updated_at DESC LIMIT 200`
       : `SELECT c.*,COALESCE(SUM(CASE WHEN o.status IN ('confirmed','completed') THEN 1 ELSE 0 END),0) order_count,COALESCE(SUM(CASE WHEN o.status IN ('confirmed','completed') THEN o.total_cents ELSE 0 END),0) lifetime_value_cents
-         FROM customers c LEFT JOIN orders o ON o.customer_id=c.id WHERE (?='' OR c.name LIKE ?)
+         FROM customers c LEFT JOIN orders o ON o.customer_id=c.id AND o.deleted_at IS NULL WHERE (?='' OR c.name LIKE ?)
          GROUP BY c.id ORDER BY c.updated_at DESC LIMIT 200`;
     const r=pii?await env.DB.prepare(sql).bind(q,like,like).all():await env.DB.prepare(sql).bind(q,like).all();
     let customers=r.results||[]; if(!pii) customers=customers.map(x=>({...x,phone:"",address:"",notes:""}));
@@ -163,7 +163,7 @@ async function api(req,env,u){
   if(p==="/api/orders"&&m==="GET"){
     need(user,"orders.read");
     const q=s(u.searchParams.get("q")||"",80),from=s(u.searchParams.get("from")||"",10),to=s(u.searchParams.get("to")||"",10),pay=s(u.searchParams.get("payment")||"",20),deliveryFrom=s(u.searchParams.get("delivery_from")||"",10);
-    const w=["1=1"],a=[]; if(from){w.push("o.order_date>=?");a.push(from)} if(to){w.push("o.order_date<=?");a.push(to)} if(pay){w.push("o.payment_status=?");a.push(pay)} if(deliveryFrom){w.push("o.delivery_date>=?");a.push(deliveryFrom)}
+    const w=["o.deleted_at IS NULL"],a=[]; if(from){w.push("o.order_date>=?");a.push(from)} if(to){w.push("o.order_date<=?");a.push(to)} if(pay){w.push("o.payment_status=?");a.push(pay)} if(deliveryFrom){w.push("o.delivery_date>=?");a.push(deliveryFrom)}
     if(q){if(can(user,"customers.pii")){w.push("(o.order_no LIKE ? OR c.name LIKE ? OR c.phone LIKE ?)");a.push("%"+q+"%","%"+q+"%","%"+q+"%")}else{w.push("o.order_no LIKE ?");a.push("%"+q+"%")}}
     const pii=can(user,"customers.pii")?",c.name customer_name,c.phone customer_phone,c.address customer_address":"";
     const r=await env.DB.prepare(`SELECT o.* ${pii},GROUP_CONCAT(oi.product_name_snapshot||' ×'||printf('%g',oi.qty),'、') item_summary
@@ -178,13 +178,31 @@ async function api(req,env,u){
   if(mm&&m==="GET"){
     need(user,"orders.read");
     const pii=can(user,"customers.pii")?",c.name customer_name,c.phone customer_phone,c.address customer_address":"";
-    let o=await env.DB.prepare(`SELECT o.* ${pii} FROM orders o LEFT JOIN customers c ON c.id=o.customer_id WHERE o.id=?`).bind(mm[1]).first(); if(!o)return nf();
+    let o=await env.DB.prepare(`SELECT o.* ${pii} FROM orders o LEFT JOIN customers c ON c.id=o.customer_id WHERE o.id=? AND o.deleted_at IS NULL`).bind(mm[1]).first(); if(!o)return nf();
     const items=await env.DB.prepare("SELECT * FROM order_items WHERE order_id=?").bind(mm[1]).all();
     let outItems=items.results||[];
     if(!can(user,"reports.read")){o=hideOrderFinance(o);outItems=outItems.map(x=>{const y={...x};delete y.unit_cost_cents;delete y.line_cost_cents;return y})}
     return j({ok:true,order:o,items:outItems});
   }
   if(mm&&m==="PATCH"){need(user,"orders.write");return j(await saveOrder(env,user,await body(req),mm[1]))}
+  if(mm&&m==="DELETE"){
+    need(user,"orders.delete");
+    const id=mm[1],old=await env.DB.prepare("SELECT * FROM orders WHERE id=? AND deleted_at IS NULL").bind(id).first(); if(!old)return nf();
+    const b=await body(req),reason=s(b.reason||"",300);
+    const rows=(await env.DB.prepare("SELECT product_id,qty,product_name_snapshot FROM order_items WHERE order_id=?").bind(id).all()).results||[];
+    const q=[];
+    if(old.status==="confirmed"||old.status==="completed"){
+      for(const x of rows){
+        if(!x.product_id)continue;
+        const p=await env.DB.prepare("SELECT id,track_stock,stock_qty FROM products WHERE id=?").bind(x.product_id).first();
+        if(p?.track_stock) q.push(env.DB.prepare("UPDATE products SET stock_qty=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind((+p.stock_qty||0)+(+x.qty||0),p.id));
+      }
+    }
+    q.push(env.DB.prepare("UPDATE orders SET deleted_at=CURRENT_TIMESTAMP,deleted_by=?,delete_reason=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(user.id,reason,id));
+    await env.DB.batch(q);
+    await audit(env,user.id,"DELETE","order",id,{order_no:old.order_no,total_cents:old.total_cents,status:old.status},{order_no:old.order_no,total_cents:old.total_cents,reason});
+    return j({ok:true,message:"訂單已刪除並保留操作紀錄"});
+  }
 
   if(p==="/api/expenses"&&m==="GET"){
     need(user,"expenses.read");
@@ -292,12 +310,12 @@ async function api(req,env,u){
       env.DB.prepare(`SELECT COUNT(*) order_count,COALESCE(SUM(total_cents),0) revenue_cents,COALESCE(SUM(product_cost_cents),0) product_cost_cents,
         COALESCE(SUM(net_profit_cents),0) order_profit_cents,COALESCE(SUM(paid_amount_cents),0) paid_cents,
         COALESCE(SUM(CASE WHEN total_cents>paid_amount_cents THEN total_cents-paid_amount_cents ELSE 0 END),0) outstanding_cents
-        FROM orders WHERE order_date BETWEEN ? AND ? AND status IN ('confirmed','completed')`).bind(from,to).first(),
+        FROM orders WHERE deleted_at IS NULL AND order_date BETWEEN ? AND ? AND status IN ('confirmed','completed')`).bind(from,to).first(),
       env.DB.prepare("SELECT COALESCE(SUM(amount_cents),0) expense_cents FROM expenses WHERE expense_date BETWEEN ? AND ?").bind(from,to).first(),
       env.DB.prepare(`SELECT order_date date,COUNT(*) orders,SUM(total_cents) revenue_cents,SUM(net_profit_cents) order_profit_cents FROM orders
         WHERE order_date BETWEEN ? AND ? AND status IN ('confirmed','completed') GROUP BY order_date ORDER BY order_date`).bind(from,to).all(),
       env.DB.prepare(`SELECT oi.product_name_snapshot name,SUM(oi.qty) qty,SUM(oi.line_total_cents) sales_cents,SUM(oi.line_cost_cents) cost_cents
-        FROM order_items oi JOIN orders o ON o.id=oi.order_id WHERE o.order_date BETWEEN ? AND ? AND o.status IN ('confirmed','completed')
+        FROM order_items oi JOIN orders o ON o.id=oi.order_id WHERE o.deleted_at IS NULL AND o.order_date BETWEEN ? AND ? AND o.status IN ('confirmed','completed')
         GROUP BY oi.product_name_snapshot ORDER BY sales_cents DESC`).bind(from,to).all()
     ]);
     const sum={...nums(o),expense_cents:+e.expense_cents||0};sum.net_profit_cents=sum.order_profit_cents-sum.expense_cents;
@@ -307,7 +325,7 @@ async function api(req,env,u){
 
   if(p==="/api/export/orders.csv"){
     need(user,"export.orders"); const r=await env.DB.prepare(`SELECT o.order_no,o.order_date,c.name customer,c.phone,c.address,o.total_cents,o.paid_amount_cents,o.net_profit_cents,o.payment_status,o.delivery_date,o.delivery_status
-      FROM orders o LEFT JOIN customers c ON c.id=o.customer_id ORDER BY o.order_date DESC`).all();
+      FROM orders o LEFT JOIN customers c ON c.id=o.customer_id WHERE o.deleted_at IS NULL ORDER BY o.order_date DESC`).all();
     const rows=[["訂單","日期","客戶","電話","地址","總額","實收","淨利","付款","送貨日","送貨狀態"],...(r.results||[]).map(x=>[x.order_no,x.order_date,x.customer,x.phone,x.address,money(x.total_cents),money(x.paid_amount_cents),money(x.net_profit_cents),x.payment_status,x.delivery_date,x.delivery_status])];
     return new Response("\uFEFF"+rows.map(r=>r.map(csv).join(",")).join("\n"),{headers:{"content-type":"text/csv; charset=utf-8","content-disposition":"attachment; filename=crab-pos-orders.csv"}});
   }
@@ -325,7 +343,7 @@ async function createFirstAdmin(env,b){
 }
 
 async function saveOrder(env,user,b,id){
-  const old=id?await env.DB.prepare("SELECT * FROM orders WHERE id=?").bind(id).first():null;
+  const old=id?await env.DB.prepare("SELECT * FROM orders WHERE id=? AND deleted_at IS NULL").bind(id).first():null;
   if(id&&!old)throw bad("找不到訂單",404);
   const oldItemsRes=id?await env.DB.prepare("SELECT * FROM order_items WHERE order_id=?").bind(id).all():{results:[]};
   const oldRows=oldItemsRes.results||[];
@@ -474,4 +492,4 @@ function s(v,n=500){return String(v??"").trim().replace(/\0/g,"").slice(0,n)}fun
 function dateNow(){return new Date().toISOString().slice(0,10)}function money(c){return((+c||0)/100).toFixed(2)}function mask(x){x=String(x||"");return x.length<5?"***":x.slice(0,2)+"***"+x.slice(-2)}function csv(v){let x=String(v??"");if(/^[=+\-@]/.test(x))x="'"+x;return '"'+x.replace(/"/g,'""')+'"'}
 async function body(req){try{return await req.json()}catch{return{}}}
 function j(x,status=200,h={}){return new Response(JSON.stringify(x),{status,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store",...h}})}
-function cors(res,req,env){const origin=req.headers.get("origin"),allow=env.ALLOWED_ORIGIN||"";if(origin&&allow&&(origin===allow||allow==="*")){res.headers.set("Access-Control-Allow-Origin",origin);res.headers.set("Access-Control-Allow-Credentials","true");res.headers.set("Access-Control-Allow-Headers","content-type");res.headers.set("Access-Control-Allow-Methods","GET,POST,PATCH,OPTIONS");res.headers.set("Vary","Origin")}return res}
+function cors(res,req,env){const origin=req.headers.get("origin"),allow=env.ALLOWED_ORIGIN||"";if(origin&&allow&&(origin===allow||allow==="*")){res.headers.set("Access-Control-Allow-Origin",origin);res.headers.set("Access-Control-Allow-Credentials","true");res.headers.set("Access-Control-Allow-Headers","content-type");res.headers.set("Access-Control-Allow-Methods","GET,POST,PATCH,DELETE,OPTIONS");res.headers.set("Vary","Origin")}return res}
