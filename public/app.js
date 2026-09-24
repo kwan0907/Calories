@@ -53,6 +53,7 @@ function setup(){
   $("#f").onsubmit=async e=>{e.preventDefault();try{const x=await req("/api/setup",{method:"POST",body:obj(e),noRedirect:true});S.user=x.user;S.settings=(await req("/api/auth/me")).settings;shell();location.hash="#/dashboard";route();toast("設定完成","success")}catch(er){toast(er.message,"error")}}
 }
 function login(){
+  closeModal();
   $("#app").innerHTML=auth("蟹帳 POS","訂單・利潤・送貨・投資者",`
   <form id="f">${field("Email","email","email")}${field("密碼","password","password")}<button class="btn primary">登入</button></form>
   <div class="auth-actions"><span class="help">未有帳戶？</span><button id="reg" type="button" class="btn">申請帳戶</button></div>`);
