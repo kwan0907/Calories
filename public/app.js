@@ -75,7 +75,7 @@ function shell(){
 }
 function route(){
   const raw=(location.hash||"#/dashboard").replace(/^#\//,""),[r,q=""]=raw.split("?"),p=new URLSearchParams(q);
-  $[...document.querySelectorAll(".nav button")].forEach(b=>b.classList.toggle("active",b.dataset.r===r));
+  [...document.querySelectorAll(".nav button")].forEach(b=>b.classList.toggle("active",b.dataset.r===r));
   const map={dashboard,orders,delivery,customers,products,expenses,investors,reports,users,audit,settings,pos:()=>pos(p.get("edit"))};
   (map[r]||dashboard)().catch(e=>{toast(e.message,"error");$("#content").innerHTML=`<div class="empty">${esc(e.message)}</div>`})
 }
