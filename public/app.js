@@ -70,12 +70,12 @@ function shell(){
   $("#app").innerHTML=`<div class="app-shell"><aside class="sidebar"><div class="brand"><div class="brand-mark">蟹</div><div><div class="brand-title">${esc(S.settings.business_name||"蟹帳 POS")}</div><div class="brand-sub">獨立雲端 POS</div></div></div>
     <nav class="nav">${nav.map(x=>`<button data-r="${x[0]}"><span>${x[1]}</span>${x[2]}</button>`).join("")}</nav></aside>
     <main class="main"><header class="topbar"><div class="top-title">${esc(S.settings.business_name||"蟹帳 POS")}</div><div class="user-box"><span class="name">${esc(S.user.name)}</span><span class="role">${ROLE_LABELS[roleOf()]||esc(roleOf())}</span><button id="logout" class="btn small ghost">登出</button></div></header><section id="content" class="content"></section></main></div>`;
-  $(".nav button").forEach(b=>b.onclick=()=>location.hash="#/"+b.dataset.r);
+  [...document.querySelectorAll(".nav button")].forEach(b=>b.onclick=()=>location.hash="#/"+b.dataset.r);
   $("#logout").onclick=async()=>{try{await req("/api/auth/logout",{method:"POST"})}catch{}S.user=null;login()}
 }
 function route(){
   const raw=(location.hash||"#/dashboard").replace(/^#\//,""),[r,q=""]=raw.split("?"),p=new URLSearchParams(q);
-  $$(".nav button").forEach(b=>b.classList.toggle("active",b.dataset.r===r));
+  $[...document.querySelectorAll(".nav button")].forEach(b=>b.classList.toggle("active",b.dataset.r===r));
   const map={dashboard,orders,delivery,customers,products,expenses,investors,reports,users,audit,settings,pos:()=>pos(p.get("edit"))};
   (map[r]||dashboard)().catch(e=>{toast(e.message,"error");$("#content").innerHTML=`<div class="empty">${esc(e.message)}</div>`})
 }
@@ -172,8 +172,8 @@ async function users(){
   $("#content").innerHTML=head("帳戶",`待審批 ${pending.length} 個；由管理員設定身分及權限`,'<button id=add class="btn primary">＋ 帳戶</button>')+
     `<div class="account-tabs"><button class="tab active" data-tab="pending">待審批 (${pending.length})</button><button class="tab" data-tab="active">已啟用 (${active.length})</button><button class="tab" data-tab="rejected">已拒絕 (${rejected.length})</button></div>
     <div id="userList" class="card">${rows(pending)}</div>`;
-  const data={pending,active,rejected};$(".tab").forEach(b=>b.onclick=()=>{$(".tab").forEach(x=>x.classList.toggle("active",x===b));$("#userList").innerHTML=rows(data[b.dataset.tab]);bind()});
-  const bind=()=>$(".ue").forEach(b=>b.onclick=()=>manageUserModal(all.find(x=>x.id===b.dataset.id),i.investors||[],()=>users()));
+  const data={pending,active,rejected};[...document.querySelectorAll(".tab")].forEach(b=>b.onclick=()=>{[...document.querySelectorAll(".tab")].forEach(x=>x.classList.toggle("active",x===b));$("#userList").innerHTML=rows(data[b.dataset.tab]);bind()});
+  const bind=()=>[...document.querySelectorAll(".ue")].forEach(b=>b.onclick=()=>manageUserModal(all.find(x=>x.id===b.dataset.id),i.investors||[],()=>users()));
   bind();$("#add").onclick=()=>userModal(i.investors||[],()=>users())
 }
 function permsHtml(selected=[]){return `<div class="perm-grid">${PERM_LABELS.map(([k,l])=>`<label class="perm-item"><input type="checkbox" name="perm" value="${attr(k)}" ${selected.includes("*")||selected.includes(k)?"checked":""}><span>${esc(l)}</span></label>`).join("")}</div>`}
