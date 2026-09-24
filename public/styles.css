@@ -122,3 +122,13 @@ html,body,#app{max-width:100%;overflow-x:hidden}
 @media(max-width:420px){
   .table-wrap td{grid-template-columns:minmax(72px,30%) minmax(0,1fr);font-size:13px}
 }
+
+.line-row>*{min-width:0}
+.line-row input,.line-row select{min-width:0}
+@media(max-width:760px){
+  .content{width:100%;overflow-x:hidden}
+  .form-grid>*{min-width:0}
+  .filters>*{min-width:0}
+  .page-head,.actions{max-width:100%}
+  .actions .btn{min-width:0}
+}
