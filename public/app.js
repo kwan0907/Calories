@@ -1,6 +1,6 @@
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const API=(window.CRAB_API_BASE||"").replace(/\/+$/,"");
-const S={user:null,settings:{business_name:"蟹帳 POS",currency:"HKD"},products:[]};
+const S={user:null,settings:{business_name:"蟹帳 POS",currency:"HKD",default_delivery_cost_cents:"0",customer_delivery_fee_cents:"0",free_shipping_threshold_cents:"0",free_shipping_basis:"discounted"},products:[]};
 const ROLE_LABELS={admin:"管理員",staff:"員工",investor:"投資者",viewer:"只讀",customer:"客戶"};
 const ROLE_DEFAULTS={
   admin:["*"],
@@ -124,8 +124,35 @@ async function pos(id){
     <div>${inp("送貨日期","delivery_date",o.delivery_date||"","","date")}</div><div>${inp("送貨時段","delivery_slot",o.delivery_slot||"")}</div>
     <div>${inp("配送員","delivery_person",o.delivery_person||"")}</div><div>${sel("送貨狀態","delivery_status",[["待安排","待安排"],["已安排","已安排"],["配送中","配送中"],["已完成","已完成"],["取消","取消"]],o.delivery_status||"待安排")}</div>
   </div><div class="section-title"><h3>產品</h3><button type="button" id="addLine" class="btn small">＋ 加產品</button></div><div id="lines" class="line-items"></div>
-  <div class="section-title"><h3>金額</h3></div><div class="form-grid">
-    <div>${moneyInp("折扣","discount",o.discount_cents)}</div><div>${moneyInp("客戶送貨費","delivery_fee",o.delivery_fee_cents)}</div>
+  <div class="section-title"><h3>金額</h3></div>
+  <div class="money-tools">
+    <div class="money-tool-card">
+      <label>折扣快捷</label>
+      <div class="discount-pills" id="discountPills">
+        <button type="button" class="discount-pill" data-off="0">原價</button>
+        <button type="button" class="discount-pill" data-off="5">95折</button>
+        <button type="button" class="discount-pill" data-off="10">9折</button>
+        <button type="button" class="discount-pill" data-off="15">85折</button>
+        <button type="button" class="discount-pill" data-off="20">8折</button>
+        <button type="button" class="discount-pill" data-off="custom">自訂</button>
+      </div>
+      <div id="customDiscountWrap" class="custom-discount is-hidden"><label>自訂折扣 %</label><input id="customDiscount" type="number" min="0" max="100" step=".1" value="0"></div>
+      <input type="hidden" name="discount_percent" value="0">
+      <input type="hidden" name="discount" value="${((+o.discount_cents||0)/100).toFixed(2)}">
+    </div>
+    <div class="money-tool-card">
+      <label>客戶運費</label>
+      <div class="shipping-modes">
+        <button type="button" class="ship-mode" data-mode="auto">自動</button>
+        <button type="button" class="ship-mode" data-mode="free">手動免運</button>
+        <button type="button" class="ship-mode" data-mode="custom">自訂</button>
+      </div>
+      <input type="hidden" name="shipping_mode" value="auto">
+      <div id="customShippingWrap" class="custom-shipping is-hidden">${moneyInp("自訂客戶運費","delivery_fee",o.delivery_fee_cents)}</div>
+      <div id="shippingHint" class="shipping-hint"></div>
+    </div>
+  </div>
+  <div class="form-grid">
     <div>${moneyInp("其他收費","other_fee",o.other_fee_cents)}</div><div>${moneyInp("實收","paid_amount",o.paid_amount_cents)}</div>
     ${finance?`<div>${moneyInp("實際送貨成本","delivery_cost",o.delivery_cost_cents??S.settings.default_delivery_cost_cents)}</div><div>${moneyInp("其他成本","other_cost",o.other_cost_cents)}</div>`:`<input type=hidden name=delivery_cost value="${((+(o.delivery_cost_cents??S.settings.default_delivery_cost_cents)||0)/100).toFixed(2)}"><input type=hidden name=other_cost value="${((+o.other_cost_cents||0)/100).toFixed(2)}">`}
     <div class="span2"><label>備註</label><textarea name="notes">${esc(o.notes||"")}</textarea></div>
@@ -139,9 +166,37 @@ async function pos(id){
     ${finance?`<div class="cost-col"><label>成本</label><input disabled value="${((+p.cost_cents||0)/100).toFixed(2)}"></div>`:""}<button type="button" class="btn small danger remove">×</button></div>`}).join("");
     $$(".line-row",box).forEach(r=>{const i=+r.dataset.i;$(".lp",r).onchange=e=>{const p=ps.find(z=>z.id===e.target.value);lines[i].product_id=p.id;lines[i].unit_price_cents=+p.sale_price_cents||0;draw();calc()};$(".lq",r).oninput=e=>{lines[i].qty=+e.target.value||0;calc()};$(".lv",r).oninput=e=>{lines[i].unit_price_cents=cents(e.target.value);calc()};$(".remove",r).onclick=()=>{if(lines.length>1){lines.splice(i,1);draw();calc()}}})
   };
-  const calc=()=>{const sub=lines.reduce((a,x)=>a+Math.round(x.qty*x.unit_price_cents),0),cost=lines.reduce((a,x)=>a+Math.round(x.qty*(+ps.find(z=>z.id===x.product_id)?.cost_cents||0)),0),disc=cents($('[name="discount"]').value),df=cents($('[name="delivery_fee"]').value),of=cents($('[name="other_fee"]').value),dc=cents($('[name="delivery_cost"]').value),oc=cents($('[name="other_cost"]').value),total=Math.max(0,sub-disc+df+of),net=total-cost-dc-oc;$("#totals").innerHTML=`<div class="total-row"><span>商品小計</span><b>${money(sub)}</b></div>${finance?`<div class="total-row"><span>商品成本</span><b>${money(cost)}</b></div>`:""}<div class="total-row grand"><span>應收總額</span><b>${money(total)}</b></div>${finance?`<div class="total-row profit"><span>此單淨利</span><b>${money(net)}</b></div>`:""}`};
-  draw();calc();$("#addLine").onclick=()=>{lines.push({product_id:ps[0].id,qty:1,unit_price_cents:+ps[0].sale_price_cents||0});draw();calc()};$$('input[name="discount"],input[name="delivery_fee"],input[name="other_fee"],input[name="delivery_cost"],input[name="other_cost"]').forEach(x=>x.oninput=calc);$("#back").onclick=()=>location.hash="#/orders";
-  $("#orderForm").onsubmit=async e=>{e.preventDefault();const f=obj(e),payload={order_no:f.order_no,order_date:f.order_date,status:f.status,payment_method:f.payment_method,delivery_date:f.delivery_date,delivery_slot:f.delivery_slot,delivery_person:f.delivery_person,delivery_status:f.delivery_status,customer:{name:f.customer_name||"散客",phone:f.customer_phone,address:f.customer_address},items:lines,discount_cents:cents(f.discount),delivery_fee_cents:cents(f.delivery_fee),other_fee_cents:cents(f.other_fee),paid_amount_cents:cents(f.paid_amount),delivery_cost_cents:cents(f.delivery_cost),other_cost_cents:cents(f.other_cost),notes:f.notes};try{const x=await req(id?"/api/orders/"+id:"/api/orders",{method:id?"PATCH":"POST",body:payload});toast("已儲存 "+x.order_no,"success");location.hash="#/orders"}catch(er){toast(er.message,"error")}}
+  const standardFee=+S.settings.customer_delivery_fee_cents||0,freeThreshold=+S.settings.free_shipping_threshold_cents||0,freeBasis=S.settings.free_shipping_basis==="subtotal"?"subtotal":"discounted";
+  let currentOff=0;
+  const currentSub=()=>lines.reduce((sum,x)=>sum+Math.round(x.qty*x.unit_price_cents),0);
+  if(id&&currentSub()>0){const inferred=(+o.discount_cents||0)/currentSub()*100;currentOff=[0,5,10,15,20].find(v=>Math.abs(v-inferred)<.05)??Math.max(0,Math.min(100,inferred))}
+  const inferShipMode=()=>{if(!id)return"auto";const sub=currentSub(),disc=Math.round(sub*currentOff/100),base=freeBasis==="subtotal"?sub:Math.max(0,sub-disc),autoFee=freeThreshold>0&&base>=freeThreshold?0:standardFee,existing=+o.delivery_fee_cents||0;if(existing===autoFee)return"auto";if(existing===0)return"free";return"custom"};
+  let shippingMode=inferShipMode();
+  const syncDiscountUI=()=>{
+    const exact=[0,5,10,15,20].some(v=>Math.abs(v-currentOff)<.05);
+    $(".discount-pill").forEach(b=>b.classList.toggle("active",b.dataset.off==="custom"?!exact:+b.dataset.off===currentOff));
+    $("#customDiscountWrap").classList.toggle("is-hidden",exact);
+    $("#customDiscount").value=exact?"":num(currentOff);
+    $('[name="discount_percent"]').value=String(currentOff);
+  };
+  const syncShipUI=()=>{$(".ship-mode").forEach(b=>b.classList.toggle("active",b.dataset.mode===shippingMode));$('[name="shipping_mode"]').value=shippingMode;$("#customShippingWrap").classList.toggle("is-hidden",shippingMode!=="custom")};
+  const calc=()=>{
+    const sub=currentSub(),cost=lines.reduce((x,y)=>x+Math.round(y.qty*(+ps.find(z=>z.id===y.product_id)?.cost_cents||0)),0),disc=Math.min(sub,Math.round(sub*currentOff/100)),discounted=Math.max(0,sub-disc),basis=freeBasis==="subtotal"?sub:discounted,autoFree=freeThreshold>0&&basis>=freeThreshold,customFee=cents($('[name="delivery_fee"]')?.value||0),df=shippingMode==="free"?0:shippingMode==="custom"?customFee:(autoFree?0:standardFee),of=cents($('[name="other_fee"]').value),dc=cents($('[name="delivery_cost"]').value),oc=cents($('[name="other_cost"]').value),total=Math.max(0,discounted+df+of),net=total-cost-dc-oc;
+    $('[name="discount"]').value=(disc/100).toFixed(2);
+    const diff=Math.max(0,freeThreshold-basis),basisLabel=freeBasis==="subtotal"?"折扣前商品額":"折扣後商品額";
+    $("#shippingHint").innerHTML=shippingMode==="auto"
+      ?(freeThreshold<=0?`自動運費：${money(standardFee)}｜未設定滿額免運`:autoFree?`✓ 已達免運門檻（${basisLabel} ${money(basis)}）`:`自動運費 ${money(standardFee)}｜尚差 ${money(diff)} 免運`)
+      :shippingMode==="free"?"手動免運：客戶運費 $0；實際送貨成本仍會扣除":"使用自訂客戶運費";
+    $("#totals").innerHTML=`<div class="total-row"><span>商品小計</span><b>${money(sub)}</b></div><div class="total-row"><span>折扣（${num(currentOff)}%）</span><b>-${money(disc)}</b></div><div class="total-row"><span>客戶運費</span><b>${money(df)}</b></div>${finance?`<div class="total-row"><span>商品成本</span><b>${money(cost)}</b></div><div class="total-row"><span>實際送貨成本</span><b>${money(dc)}</b></div>`:""}<div class="total-row grand"><span>應收總額</span><b>${money(total)}</b></div>${finance?`<div class="total-row profit"><span>此單淨利</span><b>${money(net)}</b></div>`:""}`;
+  };
+  $(".discount-pill").forEach(b=>b.onclick=()=>{if(b.dataset.off==="custom"){$("#customDiscountWrap").classList.remove("is-hidden");currentOff=Math.max(0,Math.min(100,+$("#customDiscount").value||0))}else currentOff=+b.dataset.off;syncDiscountUI();calc()});
+  $("#customDiscount").oninput=e=>{currentOff=Math.max(0,Math.min(100,+e.target.value||0));$('[name="discount_percent"]').value=String(currentOff);calc()};
+  $(".ship-mode").forEach(b=>b.onclick=()=>{shippingMode=b.dataset.mode;syncShipUI();calc()});
+  syncDiscountUI();syncShipUI();draw();calc();
+  $("#addLine").onclick=()=>{lines.push({product_id:ps[0].id,qty:1,unit_price_cents:+ps[0].sale_price_cents||0});draw();calc()};
+  $('input[name="delivery_fee"],input[name="other_fee"],input[name="delivery_cost"],input[name="other_cost"]').forEach(x=>x.oninput=calc);
+  $("#back").onclick=()=>location.hash="#/orders";
+  $("#orderForm").onsubmit=async e=>{e.preventDefault();const f=obj(e),payload={order_no:f.order_no,order_date:f.order_date,status:f.status,payment_method:f.payment_method,delivery_date:f.delivery_date,delivery_slot:f.delivery_slot,delivery_person:f.delivery_person,delivery_status:f.delivery_status,customer:{name:f.customer_name||"散客",phone:f.customer_phone,address:f.customer_address},items:lines,discount_percent:+f.discount_percent||0,discount_cents:cents(f.discount),shipping_mode:f.shipping_mode,delivery_fee_cents:cents(f.delivery_fee),other_fee_cents:cents(f.other_fee),paid_amount_cents:cents(f.paid_amount),delivery_cost_cents:cents(f.delivery_cost),other_cost_cents:cents(f.other_cost),notes:f.notes};try{const x=await req(id?"/api/orders/"+id:"/api/orders",{method:id?"PATCH":"POST",body:payload});toast("已儲存 "+x.order_no,"success");location.hash="#/orders"}catch(er){toast(er.message,"error")}}
 }
 async function orders(){
   if(!has("orders.read"))return location.hash="#/"+homeRoute();
@@ -242,7 +297,15 @@ async function audit(){
   if(!has("audit.read"))return location.hash="#/"+homeRoute();const x=await req("/api/audit");$("#content").innerHTML=head("操作紀錄","重要新增及修改紀錄")+`<div class=card>${table(["時間","人員","動作","類型","內容"],(x.logs||[]).map(l=>[esc(l.created_at),esc(l.user_name||"-"),esc(l.action),esc(l.entity_type),esc((l.after_json||"").slice(0,120))]))}</div>`
 }
 async function settings(){
-  if(!has("settings.read"))return location.hash="#/"+homeRoute();const x=await req("/api/settings"),s=x.settings||{};$("#content").innerHTML=head("設定","公司名稱、幣別及訂單編號")+`<div class=card><form id=sf class=form-grid><div class=span2>${inp("店舖 / 公司名稱","business_name",s.business_name||"蟹帳 POS")}</div><div>${inp("幣別","currency",s.currency||"HKD")}</div><div>${inp("訂單前綴","order_prefix",s.order_prefix||"CRAB")}</div><div>${moneyInp("預設送貨成本","default_delivery_cost",+s.default_delivery_cost_cents||0)}</div><div class=span4>${has("settings.write")?'<button class="btn primary">儲存</button>':'<div class="help">你只有查看設定權限</div>'}</div></form></div>`;if(has("settings.write"))$("#sf").onsubmit=async e=>{e.preventDefault();const f=obj(e);f.default_delivery_cost_cents=cents(f.default_delivery_cost);try{await req("/api/settings",{method:"PATCH",body:f});S.settings={...S.settings,...f};toast("設定已儲存","success");shell();location.hash="#/settings";route()}catch(er){toast(er.message,"error")}}
+  if(!has("settings.read"))return location.hash="#/"+homeRoute();const x=await req("/api/settings"),s=x.settings||{};$("#content").innerHTML=head("設定","公司資料、運費及免運規則")+`<div class=card><form id=sf class=form-grid>
+  <div class=span2>${inp("店舖 / 公司名稱","business_name",s.business_name||"蟹帳 POS")}</div><div>${inp("幣別","currency",s.currency||"HKD")}</div><div>${inp("訂單前綴","order_prefix",s.order_prefix||"CRAB")}</div>
+  <div>${moneyInp("標準客戶運費","customer_delivery_fee",+s.customer_delivery_fee_cents||0)}</div>
+  <div>${moneyInp("滿額免運門檻","free_shipping_threshold",+s.free_shipping_threshold_cents||0)}</div>
+  <div><label>免運判斷基準</label><select name="free_shipping_basis"><option value="discounted" ${s.free_shipping_basis!=="subtotal"?"selected":""}>折扣後商品額</option><option value="subtotal" ${s.free_shipping_basis==="subtotal"?"selected":""}>折扣前商品額</option></select></div>
+  <div>${moneyInp("實際送貨成本（預設）","default_delivery_cost",+s.default_delivery_cost_cents||0)}</div>
+  <div class="span4 help">「客戶運費」係客人支付嘅金額；「實際送貨成本」係你支付俾司機／物流嘅成本。即使免運，實際送貨成本仍然會從淨利扣除。免運門檻填 0 代表不啟用自動滿額免運。</div>
+  <div class=span4>${has("settings.write")?'<button class="btn primary">儲存設定</button>':'<div class="help">你只有查看設定權限</div>'}</div></form></div>`;
+  if(has("settings.write"))$("#sf").onsubmit=async e=>{e.preventDefault();const f=obj(e);f.default_delivery_cost_cents=cents(f.default_delivery_cost);f.customer_delivery_fee_cents=cents(f.customer_delivery_fee);f.free_shipping_threshold_cents=cents(f.free_shipping_threshold);try{await req("/api/settings",{method:"PATCH",body:f});const fresh=await req("/api/settings");S.settings={...S.settings,...(fresh.settings||{})};toast("設定已儲存","success");shell();location.hash="#/settings";route()}catch(er){toast(er.message,"error")}}
 }
 
 function head(t,s="",a=""){return `<div class=page-head><div><h2>${esc(t)}</h2><p>${esc(s)}</p></div>${a?`<div class=actions>${a}</div>`:""}</div>`}
