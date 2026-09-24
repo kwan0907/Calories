@@ -208,11 +208,23 @@ async function api(req,env,u){
     need(user,"accounts.manage"); const id=mm[1],old=await env.DB.prepare("SELECT * FROM users WHERE id=?").bind(id).first(); if(!old)return nf();
     const b=await body(req),access=validRole(b.access_role||old.access_role||old.role),status=["pending","active","rejected"].includes(b.account_status)?b.account_status:(old.account_status||"active");
     if(id===user.id&&(status!=="active"||access!=="admin")) throw bad("不可停用或降級目前登入中的管理員帳戶");
+    const name=s(b.name??old.name,80),email=s(b.email??old.email,180).toLowerCase(),newPassword=String(b.password||"");
+    if(!name||!email.includes("@")) throw bad("名稱及 Email 必填");
+    if(newPassword&&newPassword.length<10) throw bad("新密碼至少 10 個字元");
+    const dup=await env.DB.prepare("SELECT id FROM users WHERE email=? COLLATE NOCASE AND id<>? LIMIT 1").bind(email,id).first();
+    if(dup) throw bad("這個 Email 已被其他帳戶使用",409);
     const perms=normalizePerms(Array.isArray(b.permissions)?b.permissions:parsePerms(old.permissions_json),access),legacy=access==="admin"?"admin":"investor",iid=access==="investor"&&b.investor_id?s(b.investor_id,80):null,active=status==="active"?(b.is_active===0?0:1):0;
-    await env.DB.prepare(`UPDATE users SET role=?,access_role=?,permissions_json=?,account_status=?,investor_id=?,is_active=?,reviewed_at=CURRENT_TIMESTAMP,reviewed_by=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
-      .bind(legacy,access,JSON.stringify(perms),status,iid,active,user.id,id).run();
+    const ph=newPassword?await pass(newPassword):null;
+    if(ph){
+      await env.DB.prepare(`UPDATE users SET name=?,email=?,password_hash=?,password_salt=?,role=?,access_role=?,permissions_json=?,account_status=?,investor_id=?,is_active=?,reviewed_at=CURRENT_TIMESTAMP,reviewed_by=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+        .bind(name,email,ph.hash,ph.salt,legacy,access,JSON.stringify(perms),status,iid,active,user.id,id).run();
+    }else{
+      await env.DB.prepare(`UPDATE users SET name=?,email=?,role=?,access_role=?,permissions_json=?,account_status=?,investor_id=?,is_active=?,reviewed_at=CURRENT_TIMESTAMP,reviewed_by=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+        .bind(name,email,legacy,access,JSON.stringify(perms),status,iid,active,user.id,id).run();
+    }
     if(!active) await env.DB.prepare("DELETE FROM sessions WHERE user_id=?").bind(id).run();
-    await audit(env,user.id,"REVIEW","user",id,{account_status:old.account_status,access_role:old.access_role},{account_status:status,access_role:access,permissions:perms});
+    else if(newPassword&&id!==user.id) await env.DB.prepare("DELETE FROM sessions WHERE user_id=?").bind(id).run();
+    await audit(env,user.id,"REVIEW","user",id,{name:old.name,email:old.email,account_status:old.account_status,access_role:old.access_role},{name,email,account_status:status,access_role:access,permissions:perms,password_reset:!!newPassword});
     return j({ok:true});
   }
 
