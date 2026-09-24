@@ -266,3 +266,29 @@ html,body,#app{max-width:100%;overflow-x:hidden}
 @media(prefers-reduced-motion:reduce){
   *,*::before,*::after{scroll-behavior:auto!important;animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}
 }
+
+
+/* Native-like interaction polish */
+html{background:#090909;overscroll-behavior-y:contain}
+body{min-height:100dvh;overscroll-behavior-y:contain;-webkit-text-size-adjust:100%}
+button,.btn,.nav button,.mobile-nav button,.more-grid button,.discount-pill,.ship-mode{
+  -webkit-tap-highlight-color:transparent;touch-action:manipulation
+}
+button:focus-visible,.btn:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.net-state{
+  position:sticky;top:0;z-index:45;text-align:center;padding:7px 12px;
+  background:#442626;color:#ffd2d2;border-bottom:1px solid #7a3b3b;
+  font-size:12px;font-weight:800
+}
+.error-state{display:flex;flex-direction:column;align-items:center;gap:10px}
+.error-state b{color:var(--text);font-size:16px}
+.error-state span{max-width:520px;line-height:1.5}
+.is-offline .mobile-head{border-bottom-color:#57302f}
+.card,.metric,.audit-card,.money-tool-card{contain:layout paint}
+.table-wrap{-webkit-overflow-scrolling:touch}
+@media(max-width:760px){
+  .net-state{top:calc(62px + var(--safe-top));font-size:11px;padding:6px 10px}
+  .content{-webkit-overflow-scrolling:touch}
+  .mobile-nav button,.more-grid button{min-height:56px}
+  .btn{min-height:44px}
+}
