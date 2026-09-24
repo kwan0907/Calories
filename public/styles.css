@@ -238,3 +238,31 @@ html,body,#app{max-width:100%;overflow-x:hidden}
   .mobile-nav button b{font-size:9px}
   .more-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
 }
+
+/* App feel v2 */
+.app-skeleton{padding:2px 0 8px}
+.sk{position:relative;overflow:hidden;background:#17140f;border-radius:12px}
+.sk::after{content:"";position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,rgba(255,255,255,.055),transparent);animation:sk-shimmer 1.15s infinite}
+.sk-title{width:min(260px,62%);height:34px;margin-bottom:10px}
+.sk-sub{width:min(360px,78%);height:17px;margin-bottom:18px}
+.sk-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.sk-card{height:118px;border:1px solid var(--line)}
+@keyframes sk-shimmer{100%{transform:translateX(100%)}}
+
+.content.view-enter{animation:view-in .16s ease-out both}
+@keyframes view-in{from{opacity:.72;transform:translateY(3px)}to{opacity:1;transform:none}}
+.btn,.nav button,.mobile-nav button,.more-grid button,.discount-pill,.ship-mode{transition:transform .08s ease,border-color .15s ease,background-color .15s ease,opacity .15s ease}
+.btn:active,.nav button:active,.mobile-nav button:active,.more-grid button:active,.discount-pill:active,.ship-mode:active{transform:scale(.975)}
+.route-switching{min-height:120px}
+
+@media(max-width:760px){
+  .sk-grid{grid-template-columns:1fr 1fr;gap:9px}
+  .sk-card{height:96px}
+  .content.view-enter{animation-duration:.13s}
+}
+@media(max-width:420px){
+  .sk-grid{grid-template-columns:1fr}
+}
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{scroll-behavior:auto!important;animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}
+}
