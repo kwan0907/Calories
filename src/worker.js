@@ -1,4 +1,4 @@
-const COOKIE="crab_pos_session",DAYS=7,ITER=180000;
+const COOKIE="crab_pos_session",DAYS=7,ITER=100000;
 
 export default{
   async fetch(req,env){
