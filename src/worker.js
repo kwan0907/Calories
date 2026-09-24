@@ -1,0 +1,278 @@
+const COOKIE="crab_pos_session",DAYS=7,ITER=180000;
+
+export default{
+  async fetch(req,env){
+    const u=new URL(req.url);
+    if(req.method==="OPTIONS") return cors(new Response(null,{status:204}),req,env);
+    try{
+      if(u.pathname.startsWith("/api/")) return cors(await api(req,env,u),req,env);
+      return env.ASSETS.fetch(req);
+    }catch(e){
+      console.error(e);
+      const status=e.status||500;
+      return cors(j({ok:false,message:status===500?"伺服器發生錯誤":e.message},status),req,env);
+    }
+  }
+};
+
+async function api(req,env,u){
+  const m=req.method,p=u.pathname;
+  if(!env.DB) return j({ok:false,message:"D1 尚未綁定"},500);
+
+  if(p==="/api/health") return j({ok:true,service:"crab-pos"});
+  if(p==="/api/setup/status"){
+    const r=await env.DB.prepare("SELECT COUNT(*) n FROM users").first();
+    return j({ok:true,needs_setup:Number(r?.n||0)===0});
+  }
+  if(p==="/api/setup"&&m==="POST"){
+    const r=await env.DB.prepare("SELECT COUNT(*) n FROM users").first();
+    if(Number(r?.n||0)>0) return j({ok:false,message:"首次設定已完成"},403);
+    const b=await body(req);
+    if(!env.SETUP_KEY||b.setup_key!==env.SETUP_KEY) return j({ok:false,message:"Setup Key 不正確"},403);
+    return createFirstAdmin(env,b);
+  }
+  if(p==="/api/auth/login"&&m==="POST"){
+    const b=await body(req),email=s(b.email,180).toLowerCase(),pw=String(b.password||"");
+    const user=await env.DB.prepare(`SELECT u.*,i.name investor_name,i.percentage investor_percentage
+      FROM users u LEFT JOIN investors i ON i.id=u.investor_id WHERE u.email=? COLLATE NOCASE LIMIT 1`).bind(email).first();
+    if(!user||!user.is_active||!(await verify(pw,user.password_salt,user.password_hash))) return j({ok:false,message:"Email 或密碼不正確"},401);
+    return sessionResponse(env,user.id,{ok:true,user:safeUser(user)});
+  }
+  if(p==="/api/auth/logout"&&m==="POST"){
+    const t=cookie(req,COOKIE); if(t) await env.DB.prepare("DELETE FROM sessions WHERE token_hash=?").bind(await sha(t)).run();
+    return j({ok:true},200,{"Set-Cookie":clearCookie()});
+  }
+
+  const user=await currentUser(req,env);
+  if(!user) return j({ok:false,message:"請先登入"},401);
+  if(p==="/api/auth/me") return j({ok:true,user:safeUser(user),settings:await settings(env)});
+
+  if(p==="/api/dashboard"){
+    const today=s(u.searchParams.get("today")||dateNow(),10),start=today.slice(0,7)+"-01";
+    const [t,mo,te,me,top,del]=await Promise.all([
+      env.DB.prepare(`SELECT COUNT(*) order_count,COALESCE(SUM(total_cents),0) revenue_cents,COALESCE(SUM(net_profit_cents),0) order_profit_cents,
+        COALESCE(SUM(CASE WHEN total_cents>paid_amount_cents THEN total_cents-paid_amount_cents ELSE 0 END),0) unpaid_cents
+        FROM orders WHERE order_date=? AND status!='cancelled'`).bind(today).first(),
+      env.DB.prepare(`SELECT COUNT(*) order_count,COALESCE(SUM(total_cents),0) revenue_cents,COALESCE(SUM(net_profit_cents),0) order_profit_cents,
+        COALESCE(SUM(CASE WHEN total_cents>paid_amount_cents THEN total_cents-paid_amount_cents ELSE 0 END),0) unpaid_cents
+        FROM orders WHERE order_date BETWEEN ? AND ? AND status!='cancelled'`).bind(start,today).first(),
+      env.DB.prepare("SELECT COALESCE(SUM(amount_cents),0) n FROM expenses WHERE expense_date=?").bind(today).first(),
+      env.DB.prepare("SELECT COALESCE(SUM(amount_cents),0) n FROM expenses WHERE expense_date BETWEEN ? AND ?").bind(start,today).first(),
+      env.DB.prepare(`SELECT oi.product_name_snapshot name,SUM(oi.qty) qty,SUM(oi.line_total_cents) sales_cents
+        FROM order_items oi JOIN orders o ON o.id=oi.order_id WHERE o.order_date BETWEEN ? AND ? AND o.status!='cancelled'
+        GROUP BY oi.product_name_snapshot ORDER BY sales_cents DESC LIMIT 5`).bind(start,today).all(),
+      env.DB.prepare(`SELECT id,order_no,delivery_date,delivery_slot,delivery_person,delivery_status,total_cents
+        FROM orders WHERE delivery_date>=? AND status!='cancelled' AND delivery_status!='已完成' ORDER BY delivery_date LIMIT 10`).bind(today).all()
+    ]);
+    const out={ok:true,today:{...nums(t),expense_cents:+te.n||0,net_profit_cents:(+t.order_profit_cents||0)-(+te.n||0)},
+      month:{...nums(mo),expense_cents:+me.n||0,net_profit_cents:(+mo.order_profit_cents||0)-(+me.n||0)},
+      top_products:top.results||[],deliveries:del.results||[]};
+    if(user.role==="investor") out.investor={name:user.investor_name||user.name,percentage:+user.investor_percentage||0,
+      estimated_share_cents:Math.round(out.month.net_profit_cents*(+user.investor_percentage||0)/100)};
+    return j(out);
+  }
+
+  if(p==="/api/products"&&m==="GET"){
+    const all=user.role==="admin"&&u.searchParams.get("all")==="1";
+    const r=await env.DB.prepare(`SELECT * FROM products ${all?"":"WHERE is_active=1"} ORDER BY category,name`).all();
+    return j({ok:true,products:r.results||[]});
+  }
+  if(p==="/api/products"&&m==="POST"){
+    admin(user); const b=await body(req),x=product(b),id=crypto.randomUUID();
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO products(id,sku,category,name,unit,cost_cents,sale_price_cents,track_stock,stock_qty,is_active) VALUES(?,?,?,?,?,?,?,?,?,?)")
+        .bind(id,x.sku,x.category,x.name,x.unit,x.cost_cents,x.sale_price_cents,x.track_stock,x.stock_qty,x.is_active),
+      env.DB.prepare("INSERT INTO product_cost_history(id,product_id,cost_cents,changed_by) VALUES(?,?,?,?)").bind(crypto.randomUUID(),id,x.cost_cents,user.id)
+    ]);
+    await audit(env,user.id,"CREATE","product",id,null,x); return j({ok:true,id},201);
+  }
+  let mm=p.match(/^\/api\/products\/([^/]+)$/);
+  if(mm&&m==="PATCH"){
+    admin(user); const id=mm[1],old=await env.DB.prepare("SELECT * FROM products WHERE id=?").bind(id).first(); if(!old)return nf();
+    const x=product({...old,...await body(req)}),q=[env.DB.prepare(`UPDATE products SET sku=?,category=?,name=?,unit=?,cost_cents=?,sale_price_cents=?,track_stock=?,stock_qty=?,is_active=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+      .bind(x.sku,x.category,x.name,x.unit,x.cost_cents,x.sale_price_cents,x.track_stock,x.stock_qty,x.is_active,id)];
+    if(+old.cost_cents!==x.cost_cents) q.push(env.DB.prepare("INSERT INTO product_cost_history(id,product_id,cost_cents,changed_by) VALUES(?,?,?,?)").bind(crypto.randomUUID(),id,x.cost_cents,user.id));
+    await env.DB.batch(q); await audit(env,user.id,"UPDATE","product",id,old,x); return j({ok:true});
+  }
+
+  if(p==="/api/customers"&&m==="GET"){
+    admin(user); const q=s(u.searchParams.get("q")||"",100),like="%"+q+"%";
+    const r=await env.DB.prepare(`SELECT c.*,COUNT(o.id) order_count,COALESCE(SUM(CASE WHEN o.status!='cancelled' THEN o.total_cents ELSE 0 END),0) lifetime_value_cents
+      FROM customers c LEFT JOIN orders o ON o.customer_id=c.id WHERE (?='' OR c.name LIKE ? OR c.phone LIKE ?)
+      GROUP BY c.id ORDER BY c.updated_at DESC LIMIT 200`).bind(q,like,like).all();
+    return j({ok:true,customers:r.results||[]});
+  }
+  if(p==="/api/customers"&&m==="POST"){
+    admin(user); const x=customer(await body(req)),id=crypto.randomUUID();
+    await env.DB.prepare("INSERT INTO customers(id,name,phone,address,notes) VALUES(?,?,?,?,?)").bind(id,x.name,x.phone,x.address,x.notes).run();
+    await audit(env,user.id,"CREATE","customer",id,null,{name:x.name,phone:mask(x.phone)}); return j({ok:true,id},201);
+  }
+  mm=p.match(/^\/api\/customers\/([^/]+)$/);
+  if(mm&&m==="PATCH"){
+    admin(user); const id=mm[1],old=await env.DB.prepare("SELECT * FROM customers WHERE id=?").bind(id).first(); if(!old)return nf();
+    const x=customer({...old,...await body(req)});
+    await env.DB.prepare("UPDATE customers SET name=?,phone=?,address=?,notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(x.name,x.phone,x.address,x.notes,id).run();
+    await audit(env,user.id,"UPDATE","customer",id,{name:old.name,phone:mask(old.phone)},{name:x.name,phone:mask(x.phone)}); return j({ok:true});
+  }
+
+  if(p==="/api/orders"&&m==="GET"){
+    const q=s(u.searchParams.get("q")||"",80),from=s(u.searchParams.get("from")||"",10),to=s(u.searchParams.get("to")||"",10),pay=s(u.searchParams.get("payment")||"",20);
+    const w=["1=1"],a=[]; if(from){w.push("o.order_date>=?");a.push(from)} if(to){w.push("o.order_date<=?");a.push(to)} if(pay){w.push("o.payment_status=?");a.push(pay)}
+    if(q){if(user.role==="admin"){w.push("(o.order_no LIKE ? OR c.name LIKE ? OR c.phone LIKE ?)");a.push("%"+q+"%","%"+q+"%","%"+q+"%")}else{w.push("o.order_no LIKE ?");a.push("%"+q+"%")}}
+    const pii=user.role==="admin"?",c.name customer_name,c.phone customer_phone,c.address customer_address":"";
+    const r=await env.DB.prepare(`SELECT o.* ${pii},GROUP_CONCAT(oi.product_name_snapshot||' ×'||printf('%g',oi.qty),'、') item_summary
+      FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN order_items oi ON oi.order_id=o.id
+      WHERE ${w.join(" AND ")} GROUP BY o.id ORDER BY o.order_date DESC,o.created_at DESC LIMIT 300`).bind(...a).all();
+    return j({ok:true,orders:r.results||[]});
+  }
+  if(p==="/api/orders"&&m==="POST"){admin(user);return j(await saveOrder(env,user,await body(req),null),201)}
+  mm=p.match(/^\/api\/orders\/([^/]+)$/);
+  if(mm&&m==="GET"){
+    const pii=user.role==="admin"?",c.name customer_name,c.phone customer_phone,c.address customer_address":"";
+    const o=await env.DB.prepare(`SELECT o.* ${pii} FROM orders o LEFT JOIN customers c ON c.id=o.customer_id WHERE o.id=?`).bind(mm[1]).first(); if(!o)return nf();
+    const items=await env.DB.prepare("SELECT * FROM order_items WHERE order_id=?").bind(mm[1]).all(); return j({ok:true,order:o,items:items.results||[]});
+  }
+  if(mm&&m==="PATCH"){admin(user);return j(await saveOrder(env,user,await body(req),mm[1]))}
+
+  if(p==="/api/expenses"&&m==="GET"){
+    const from=s(u.searchParams.get("from")||"",10),to=s(u.searchParams.get("to")||"",10),w=["1=1"],a=[];
+    if(from){w.push("expense_date>=?");a.push(from)} if(to){w.push("expense_date<=?");a.push(to)}
+    const r=await env.DB.prepare(`SELECT * FROM expenses WHERE ${w.join(" AND ")} ORDER BY expense_date DESC,created_at DESC LIMIT 300`).bind(...a).all();
+    return j({ok:true,expenses:r.results||[]});
+  }
+  if(p==="/api/expenses"&&m==="POST"){
+    admin(user); const b=await body(req),id=crypto.randomUUID(),d=s(b.expense_date||dateNow(),10),type=s(b.type||"其他",80),desc=s(b.description,200),amt=Math.max(0,int(b.amount_cents)),notes=s(b.notes||"",1000);
+    if(!desc)throw bad("支出說明必填");
+    await env.DB.prepare("INSERT INTO expenses(id,expense_date,type,description,amount_cents,notes,created_by) VALUES(?,?,?,?,?,?,?)").bind(id,d,type,desc,amt,notes,user.id).run();
+    await audit(env,user.id,"CREATE","expense",id,null,{d,type,desc,amt}); return j({ok:true,id},201);
+  }
+
+  if(p==="/api/investors"&&m==="GET"){
+    if(user.role==="investor"){
+      const x=user.investor_id?await env.DB.prepare("SELECT * FROM investors WHERE id=?").bind(user.investor_id).first():null;
+      return j({ok:true,investors:x?[x]:[]});
+    }
+    const r=await env.DB.prepare("SELECT * FROM investors ORDER BY is_active DESC,name").all(); return j({ok:true,investors:r.results||[]});
+  }
+  if(p==="/api/investors"&&m==="POST"){
+    admin(user); const b=await body(req),name=s(b.name,120),pct=+b.percentage||0,id=crypto.randomUUID(); if(!name||pct<0||pct>100)throw bad("名稱或比例不正確");
+    const t=await env.DB.prepare("SELECT COALESCE(SUM(percentage),0) n FROM investors WHERE is_active=1").first(); if((+t.n||0)+pct>100.0001)throw bad("啟用中的投資比例不可超過 100%");
+    await env.DB.prepare("INSERT INTO investors(id,name,percentage,is_active,notes) VALUES(?,?,?,?,?)").bind(id,name,pct,b.is_active===0?0:1,s(b.notes||"",1000)).run();
+    await audit(env,user.id,"CREATE","investor",id,null,{name,pct}); return j({ok:true,id},201);
+  }
+
+  if(p==="/api/users"&&m==="GET"){
+    admin(user); const r=await env.DB.prepare(`SELECT u.id,u.name,u.email,u.role,u.investor_id,u.is_active,u.created_at,i.name investor_name
+      FROM users u LEFT JOIN investors i ON i.id=u.investor_id ORDER BY u.created_at`).all(); return j({ok:true,users:r.results||[]});
+  }
+  if(p==="/api/users"&&m==="POST"){
+    admin(user); const b=await body(req),name=s(b.name,80),email=s(b.email,180).toLowerCase(),pw=String(b.password||""),role=b.role==="investor"?"investor":"admin",iid=role==="investor"&&b.investor_id?s(b.investor_id,80):null;
+    if(!name||!email.includes("@")||pw.length<10)throw bad("名稱、Email 必填；密碼至少 10 個字元");
+    const ph=await pass(pw),id=crypto.randomUUID();
+    await env.DB.prepare("INSERT INTO users(id,name,email,password_hash,password_salt,role,investor_id,is_active) VALUES(?,?,?,?,?,?,?,1)").bind(id,name,email,ph.hash,ph.salt,role,iid).run();
+    await audit(env,user.id,"CREATE","user",id,null,{name,email,role}); return j({ok:true,id},201);
+  }
+
+  if(p==="/api/settings"&&m==="GET"){
+    const x=await settings(env); return j({ok:true,settings:x});
+  }
+  if(p==="/api/settings"&&m==="PATCH"){
+    admin(user); const b=await body(req),allow=["business_name","currency","order_prefix","default_delivery_cost_cents"],q=[];
+    for(const k of allow) if(k in b) q.push(env.DB.prepare(`INSERT INTO settings(key,value,updated_at) VALUES(?,?,CURRENT_TIMESTAMP)
+      ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=CURRENT_TIMESTAMP`).bind(k,String(b[k])));
+    if(q.length)await env.DB.batch(q); await audit(env,user.id,"UPDATE","settings","global",null,b); return j({ok:true});
+  }
+
+  if(p==="/api/audit"){
+    admin(user); const r=await env.DB.prepare(`SELECT a.*,u.name user_name FROM audit_logs a LEFT JOIN users u ON u.id=a.user_id ORDER BY a.created_at DESC LIMIT 300`).all();
+    return j({ok:true,logs:r.results||[]});
+  }
+
+  if(p==="/api/reports/summary"){
+    const from=s(u.searchParams.get("from")||dateNow().slice(0,7)+"-01",10),to=s(u.searchParams.get("to")||dateNow(),10);
+    const [o,e,byday,byp]=await Promise.all([
+      env.DB.prepare(`SELECT COUNT(*) order_count,COALESCE(SUM(total_cents),0) revenue_cents,COALESCE(SUM(product_cost_cents),0) product_cost_cents,
+        COALESCE(SUM(net_profit_cents),0) order_profit_cents,COALESCE(SUM(paid_amount_cents),0) paid_cents,
+        COALESCE(SUM(CASE WHEN total_cents>paid_amount_cents THEN total_cents-paid_amount_cents ELSE 0 END),0) outstanding_cents
+        FROM orders WHERE order_date BETWEEN ? AND ? AND status!='cancelled'`).bind(from,to).first(),
+      env.DB.prepare("SELECT COALESCE(SUM(amount_cents),0) expense_cents FROM expenses WHERE expense_date BETWEEN ? AND ?").bind(from,to).first(),
+      env.DB.prepare(`SELECT order_date date,COUNT(*) orders,SUM(total_cents) revenue_cents,SUM(net_profit_cents) order_profit_cents FROM orders
+        WHERE order_date BETWEEN ? AND ? AND status!='cancelled' GROUP BY order_date ORDER BY order_date`).bind(from,to).all(),
+      env.DB.prepare(`SELECT oi.product_name_snapshot name,SUM(oi.qty) qty,SUM(oi.line_total_cents) sales_cents,SUM(oi.line_cost_cents) cost_cents
+        FROM order_items oi JOIN orders o ON o.id=oi.order_id WHERE o.order_date BETWEEN ? AND ? AND o.status!='cancelled'
+        GROUP BY oi.product_name_snapshot ORDER BY sales_cents DESC`).bind(from,to).all()
+    ]);
+    const sum={...nums(o),expense_cents:+e.expense_cents||0};sum.net_profit_cents=sum.order_profit_cents-sum.expense_cents;
+    if(user.role==="investor"){sum.investor_percentage=+user.investor_percentage||0;sum.investor_share_cents=Math.round(sum.net_profit_cents*sum.investor_percentage/100)}
+    return j({ok:true,from,to,summary:sum,by_day:byday.results||[],by_product:byp.results||[]});
+  }
+
+  if(p==="/api/export/orders.csv"){
+    admin(user); const r=await env.DB.prepare(`SELECT o.order_no,o.order_date,c.name customer,c.phone,c.address,o.total_cents,o.paid_amount_cents,o.net_profit_cents,o.payment_status,o.delivery_date,o.delivery_status
+      FROM orders o LEFT JOIN customers c ON c.id=o.customer_id ORDER BY o.order_date DESC`).all();
+    const rows=[["訂單","日期","客戶","電話","地址","總額","實收","淨利","付款","送貨日","送貨狀態"],...(r.results||[]).map(x=>[x.order_no,x.order_date,x.customer,x.phone,x.address,money(x.total_cents),money(x.paid_amount_cents),money(x.net_profit_cents),x.payment_status,x.delivery_date,x.delivery_status])];
+    return new Response("\uFEFF"+rows.map(r=>r.map(csv).join(",")).join("\n"),{headers:{"content-type":"text/csv; charset=utf-8","content-disposition":"attachment; filename=crab-pos-orders.csv"}});
+  }
+
+  return nf();
+}
+
+async function createFirstAdmin(env,b){
+  const name=s(b.name,80),email=s(b.email,180).toLowerCase(),pw=String(b.password||"");
+  if(!name||!email.includes("@")||pw.length<10)throw bad("請輸入名稱、Email，密碼至少 10 個字元");
+  const ph=await pass(pw),id=crypto.randomUUID();
+  await env.DB.prepare("INSERT INTO users(id,name,email,password_hash,password_salt,role,is_active) VALUES(?,?,?,?,?,'admin',1)").bind(id,name,email,ph.hash,ph.salt).run();
+  return sessionResponse(env,id,{ok:true,user:{id,name,email,role:"admin"}});
+}
+
+async function saveOrder(env,user,b,id){
+  const old=id?await env.DB.prepare("SELECT * FROM orders WHERE id=?").bind(id).first():null;if(id&&!old)throw bad("找不到訂單",404);
+  let cid=b.customer_id||old?.customer_id||null;
+  if(b.customer){
+    const c=customer(b.customer);
+    if(cid) await env.DB.prepare("UPDATE customers SET name=?,phone=?,address=?,notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(c.name,c.phone,c.address,c.notes,cid).run();
+    else{cid=crypto.randomUUID();await env.DB.prepare("INSERT INTO customers(id,name,phone,address,notes) VALUES(?,?,?,?,?)").bind(cid,c.name,c.phone,c.address,c.notes).run()}
+  }
+  let items=[];
+  if(Array.isArray(b.items)){
+    if(!b.items.length)throw bad("至少要有一項產品");
+    for(const x of b.items){
+      const p=await env.DB.prepare("SELECT * FROM products WHERE id=?").bind(x.product_id).first(); if(!p)throw bad("找不到產品");
+      const qty=+x.qty||0;if(qty<=0)throw bad("數量不正確");const price=x.unit_price_cents==null?+p.sale_price_cents:int(x.unit_price_cents),cost=+p.cost_cents||0;
+      items.push({id:crypto.randomUUID(),product_id:p.id,name:p.name,unit:p.unit,qty,price,cost,total:Math.round(qty*price),linecost:Math.round(qty*cost)});
+    }
+  }else if(id){const r=await env.DB.prepare("SELECT * FROM order_items WHERE order_id=?").bind(id).all();items=(r.results||[]).map(x=>({id:x.id,product_id:x.product_id,name:x.product_name_snapshot,unit:x.unit_snapshot,qty:+x.qty,price:+x.unit_price_cents,cost:+x.unit_cost_cents,total:+x.line_total_cents,linecost:+x.line_cost_cents}))}
+  const subtotal=items.reduce((a,x)=>a+x.total,0),pcost=items.reduce((a,x)=>a+x.linecost,0),disc=Math.max(0,int(b.discount_cents??old?.discount_cents)),df=Math.max(0,int(b.delivery_fee_cents??old?.delivery_fee_cents)),of=Math.max(0,int(b.other_fee_cents??old?.other_fee_cents)),dc=Math.max(0,int(b.delivery_cost_cents??old?.delivery_cost_cents)),oc=Math.max(0,int(b.other_cost_cents??old?.other_cost_cents));
+  const total=Math.max(0,subtotal-disc+df+of),paid=Math.max(0,int(b.paid_amount_cents??old?.paid_amount_cents)),tcost=pcost+dc+oc,net=total-tcost,pay=paid<=0?"unpaid":paid>=total?"paid":"partial";
+  const od=s(b.order_date||old?.order_date||dateNow(),10),no=s(b.order_no||old?.order_no||await orderNo(env,od),50),ds=["待安排","已安排","配送中","已完成","取消"].includes(b.delivery_status)?b.delivery_status:(old?.delivery_status||"待安排"),status=["draft","confirmed","completed","cancelled"].includes(b.status)?b.status:(old?.status||"confirmed");
+  const q=[];
+  if(id)q.push(env.DB.prepare(`UPDATE orders SET order_no=?,customer_id=?,order_date=?,delivery_date=?,delivery_slot=?,delivery_person=?,delivery_status=?,status=?,payment_status=?,payment_method=?,subtotal_cents=?,discount_cents=?,delivery_fee_cents=?,other_fee_cents=?,total_cents=?,paid_amount_cents=?,product_cost_cents=?,delivery_cost_cents=?,other_cost_cents=?,total_cost_cents=?,gross_profit_cents=?,net_profit_cents=?,notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`).bind(no,cid,od,s(b.delivery_date||old.delivery_date,10),s(b.delivery_slot||old.delivery_slot,80),s(b.delivery_person||old.delivery_person,80),ds,status,pay,s(b.payment_method||old.payment_method,50),subtotal,disc,df,of,total,paid,pcost,dc,oc,tcost,subtotal-disc-pcost,net,s(b.notes||old.notes,1000),id));
+  else{id=crypto.randomUUID();q.push(env.DB.prepare(`INSERT INTO orders(id,order_no,customer_id,order_date,delivery_date,delivery_slot,delivery_person,delivery_status,status,payment_status,payment_method,subtotal_cents,discount_cents,delivery_fee_cents,other_fee_cents,total_cents,paid_amount_cents,product_cost_cents,delivery_cost_cents,other_cost_cents,total_cost_cents,gross_profit_cents,net_profit_cents,notes,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(id,no,cid,od,s(b.delivery_date||"",10),s(b.delivery_slot||"",80),s(b.delivery_person||"",80),ds,status,pay,s(b.payment_method||"",50),subtotal,disc,df,of,total,paid,pcost,dc,oc,tcost,subtotal-disc-pcost,net,s(b.notes||"",1000),user.id))}
+  if(Array.isArray(b.items)){q.push(env.DB.prepare("DELETE FROM order_items WHERE order_id=?").bind(id));for(const x of items)q.push(env.DB.prepare("INSERT INTO order_items(id,order_id,product_id,product_name_snapshot,unit_snapshot,qty,unit_price_cents,unit_cost_cents,line_total_cents,line_cost_cents) VALUES(?,?,?,?,?,?,?,?,?,?)").bind(x.id,id,x.product_id,x.name,x.unit,x.qty,x.price,x.cost,x.total,x.linecost))}
+  await env.DB.batch(q);await audit(env,user.id,old?"UPDATE":"CREATE","order",id,old?{order_no:old.order_no,total_cents:old.total_cents}:null,{order_no:no,total_cents:total,net_profit_cents:net});
+  return {ok:true,id,order_no:no,total_cents:total,net_profit_cents:net,payment_status:pay};
+}
+
+async function currentUser(req,env){const t=cookie(req,COOKIE);if(!t)return null;return await env.DB.prepare(`SELECT u.id,u.name,u.email,u.role,u.investor_id,u.is_active,i.name investor_name,i.percentage investor_percentage
+  FROM sessions s JOIN users u ON u.id=s.user_id LEFT JOIN investors i ON i.id=u.investor_id WHERE s.token_hash=? AND s.expires_at>CURRENT_TIMESTAMP AND u.is_active=1 LIMIT 1`).bind(await sha(t)).first()}
+async function sessionResponse(env,uid,payload){const t=token(),exp=new Date(Date.now()+DAYS*864e5).toISOString();await env.DB.prepare("INSERT INTO sessions(id,user_id,token_hash,expires_at) VALUES(?,?,?,?)").bind(crypto.randomUUID(),uid,await sha(t),exp).run();return j(payload,200,{"Set-Cookie":`${COOKIE}=${t}; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=${DAYS*86400}`})}
+function clearCookie(){return `${COOKIE}=; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=0`}
+function cookie(req,n){for(const p of (req.headers.get("cookie")||"").split(";")){const [k,...v]=p.trim().split("=");if(k===n)return v.join("=")}return""}
+async function pass(p){const salt=crypto.getRandomValues(new Uint8Array(16)),hash=await derive(p,salt);return{salt:b64(salt),hash}}
+async function verify(p,salt,h){try{return await derive(p,fromb64(salt))===h}catch{return false}}
+async function derive(p,salt){const k=await crypto.subtle.importKey("raw",new TextEncoder().encode(p),"PBKDF2",false,["deriveBits"]);return b64(new Uint8Array(await crypto.subtle.deriveBits({name:"PBKDF2",hash:"SHA-256",salt,iterations:ITER},k,256)))}
+async function sha(x){const a=new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(x)));return [...a].map(b=>b.toString(16).padStart(2,"0")).join("")}
+function token(){return b64(crypto.getRandomValues(new Uint8Array(32))).replace(/[+/=]/g,"")}
+function b64(a){let s="";for(const b of a)s+=String.fromCharCode(b);return btoa(s)}function fromb64(s){const x=atob(s),a=new Uint8Array(x.length);for(let i=0;i<x.length;i++)a[i]=x.charCodeAt(i);return a}
+async function settings(env){const r=await env.DB.prepare("SELECT key,value FROM settings").all();return Object.fromEntries((r.results||[]).map(x=>[x.key,x.value]))}
+async function audit(env,uid,act,type,id,before,after){try{await env.DB.prepare("INSERT INTO audit_logs(id,user_id,action,entity_type,entity_id,before_json,after_json) VALUES(?,?,?,?,?,?,?)").bind(crypto.randomUUID(),uid,act,type,id||"",before?JSON.stringify(before):null,after?JSON.stringify(after):null).run()}catch{}}
+async function orderNo(env,d){const x=await settings(env),pre=(x.order_prefix||"CRAB").replace(/[^A-Z0-9_-]/gi,"")||"CRAB";return `${pre}-${d.replace(/-/g,"")}-${Math.floor(Math.random()*10000).toString().padStart(4,"0")}`}
+function product(b){const name=s(b.name,120);if(!name)throw bad("產品名稱必填");return{name,sku:s(b.sku||"",50),category:s(b.category||"其他",80),unit:s(b.unit||"隻",20),cost_cents:Math.max(0,int(b.cost_cents)),sale_price_cents:Math.max(0,int(b.sale_price_cents)),track_stock:bool(b.track_stock),stock_qty:+b.stock_qty||0,is_active:b.is_active===0||b.is_active==="0"?0:1}}
+function customer(b){const name=s(b.name||"散客",120);return{name,phone:s(b.phone||"",50),address:s(b.address||"",400),notes:s(b.notes||"",1000)}}
+function safeUser(u){return{id:u.id,name:u.name,email:u.email,role:u.role,investor_id:u.investor_id||null,investor_name:u.investor_name||null,investor_percentage:+u.investor_percentage||0}}
+function admin(u){if(u.role!=="admin")throw bad("沒有權限",403)}function bad(msg,status=400){const e=new Error(msg);e.status=status;return e}function nf(){return j({ok:false,message:"找不到資料"},404)}
+function s(v,n=500){return String(v??"").trim().replace(/\0/g,"").slice(0,n)}function int(v){const n=Number(v);return Number.isFinite(n)?Math.round(n):0}function bool(v){return v===1||v==="1"||v===true?1:0}function nums(o){const x={};for(const[k,v]of Object.entries(o||{}))x[k]=/(_cents|count)$/.test(k)?+v||0:v;return x}
+function dateNow(){return new Date().toISOString().slice(0,10)}function money(c){return((+c||0)/100).toFixed(2)}function mask(x){x=String(x||"");return x.length<5?"***":x.slice(0,2)+"***"+x.slice(-2)}function csv(v){return '"'+String(v??"").replace(/"/g,'""')+'"'}
+async function body(req){try{return await req.json()}catch{return{}}}
+function j(x,status=200,h={}){return new Response(JSON.stringify(x),{status,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store",...h}})}
+function cors(res,req,env){const origin=req.headers.get("origin"),allow=env.ALLOWED_ORIGIN||"";if(origin&&allow&&(origin===allow||allow==="*")){res.headers.set("Access-Control-Allow-Origin",origin);res.headers.set("Access-Control-Allow-Credentials","true");res.headers.set("Access-Control-Allow-Headers","content-type");res.headers.set("Access-Control-Allow-Methods","GET,POST,PATCH,OPTIONS");res.headers.set("Vary","Origin")}return res}
