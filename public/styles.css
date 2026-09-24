@@ -99,3 +99,26 @@ textarea{min-height:92px;resize:vertical}
 @media(max-width:420px){
   .discount-pills,.shipping-modes{grid-template-columns:repeat(2,1fr)}
 }
+
+.audit-note{margin-top:4px;color:var(--gold2);overflow-wrap:anywhere}
+html,body,#app{max-width:100%;overflow-x:hidden}
+.main,.content,.card{min-width:0;max-width:100%}
+
+@media(max-width:760px){
+  .table-wrap{overflow:visible;border:0;border-radius:0;max-width:100%}
+  .table-wrap table{display:block;width:100%;min-width:0;background:transparent}
+  .table-wrap thead{display:none}
+  .table-wrap tbody{display:grid;gap:10px;width:100%}
+  .table-wrap tr{display:block;width:100%;background:#0e0d0b;border:1px solid var(--line);border-radius:12px;padding:4px 10px}
+  .table-wrap td{display:grid;grid-template-columns:minmax(82px,32%) minmax(0,1fr);gap:10px;width:100%;padding:10px 2px;border-bottom:1px solid #242015;overflow-wrap:anywhere;word-break:break-word;white-space:normal}
+  .table-wrap td:last-child{border-bottom:0}
+  .table-wrap td::before{content:attr(data-label);color:var(--muted);font-size:11px;font-weight:800;align-self:start}
+  .table-wrap td[data-label=""]{display:block;text-align:right}
+  .table-wrap td[data-label=""]::before{display:none}
+  .table-wrap td .btn{max-width:100%;margin:2px 0}
+  .grid.two{grid-template-columns:1fr}
+  .card>.table-wrap{margin:0}
+}
+@media(max-width:420px){
+  .table-wrap td{grid-template-columns:minmax(72px,30%) minmax(0,1fr);font-size:13px}
+}
