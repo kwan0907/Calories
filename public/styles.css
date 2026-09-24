@@ -57,3 +57,25 @@ textarea{min-height:92px;resize:vertical}
 .perm-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.perm-item{display:flex;align-items:center;gap:9px;margin:0;padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:#0c0b09;color:var(--text)}.perm-item input{width:auto;margin:0;accent-color:var(--gold)}.perm-item span{font-size:13px}
 .review-user{display:flex;flex-direction:column;gap:3px;padding:12px;margin-bottom:14px;border:1px solid var(--line);border-radius:12px;background:#0c0b09}.review-user span{font-size:12px;color:var(--muted)}
 @media(max-width:560px){.perm-grid{grid-template-columns:1fr}.auth-actions{align-items:stretch;flex-direction:column}.auth-actions .btn{width:100%}}
+
+.is-hidden{display:none!important}
+.account-form{display:flex;flex-direction:column;gap:12px}
+.modal-savebar{position:sticky;bottom:-18px;margin:8px -18px -18px;padding:12px 18px calc(12px + var(--safe));display:flex;align-items:center;justify-content:flex-end;gap:12px;background:linear-gradient(180deg,rgba(17,16,13,.78),#11100d 30%);border-top:1px solid var(--line);z-index:3}
+.modal-savebar .btn{min-width:170px}
+.form-status{min-height:20px;flex:1;font-size:12px;color:var(--muted);text-align:right}
+.form-status.success{color:var(--green)}
+.form-status.error{color:#ef9999}
+.btn:disabled{opacity:.6;cursor:wait}
+@media(max-width:760px){
+  .modal-backdrop{display:flex;align-items:flex-end;padding:0}
+  .modal{width:100%;max-width:none;height:92dvh;max-height:92dvh;border-radius:20px 20px 0 0;padding:14px;display:flex;flex-direction:column}
+  .modal-head{position:sticky;top:-14px;z-index:4;background:#11100d;padding:14px 0 10px;margin:0 0 8px;border-bottom:1px solid var(--line)}
+  .modal-head .btn{min-width:44px;min-height:44px}
+  .account-form{min-height:0;overflow:auto;padding-bottom:6px}
+  .perm-grid{grid-template-columns:1fr}
+  .perm-item{min-height:48px;padding:11px 12px}
+  .perm-item input{width:20px;height:20px}
+  .modal-savebar{bottom:-6px;margin:6px -14px -6px;padding:10px 14px calc(10px + var(--safe));flex-direction:column;align-items:stretch}
+  .modal-savebar .btn{width:100%;min-height:50px}
+  .form-status{text-align:center;min-height:18px}
+}
