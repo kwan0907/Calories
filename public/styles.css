@@ -83,3 +83,19 @@ textarea{min-height:92px;resize:vertical}
 .line-row.no-cost{grid-template-columns:2fr .65fr 1fr 40px}
 @media(max-width:760px){.line-row.no-cost{grid-template-columns:1.7fr .65fr 1fr 40px}}
 @media(max-width:420px){.line-row.no-cost{grid-template-columns:1fr 70px}.line-row.no-cost .price-col{grid-column:span 1}.line-row.no-cost .remove{grid-column:2;grid-row:1}}
+
+.money-tools{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px}
+.money-tool-card{background:#0c0b09;border:1px solid var(--line);border-radius:14px;padding:12px}
+.discount-pills,.shipping-modes{display:flex;gap:8px;flex-wrap:wrap}
+.discount-pill,.ship-mode{border:1px solid #3a3120;background:#17130e;color:var(--text);border-radius:999px;padding:9px 12px;font-weight:800}
+.discount-pill.active,.ship-mode.active{background:linear-gradient(135deg,#e1bd64,#b88c36);color:#161108;border-color:transparent}
+.custom-discount,.custom-shipping{margin-top:10px}
+.shipping-hint{margin-top:10px;padding:10px 11px;border:1px solid #3a3120;border-radius:10px;background:#12100c;color:var(--gold2);font-size:12px;line-height:1.45}
+@media(max-width:760px){
+  .money-tools{grid-template-columns:1fr}
+  .discount-pills,.shipping-modes{display:grid;grid-template-columns:repeat(3,1fr)}
+  .discount-pill,.ship-mode{min-height:44px;padding:9px 8px}
+}
+@media(max-width:420px){
+  .discount-pills,.shipping-modes{grid-template-columns:repeat(2,1fr)}
+}
