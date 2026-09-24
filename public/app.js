@@ -131,7 +131,7 @@ async function pos(id){
   </div><div id="totals" class="totals" style="margin-top:16px"></div>
   <div class="actions" style="justify-content:flex-end;margin-top:16px"><button type="button" id="back" class="btn">返回</button><button class="btn primary">${id?"儲存修改":"完成開單"}</button></div></div></form>`;
   const box=$("#lines");
-  const draw=()=>{box.innerHTML=lines.map((x,i)=>{const p=ps.find(z=>z.id===x.product_id)||ps[0];return `<div class="line-row" data-i="${i}">
+  const draw=()=>{box.innerHTML=lines.map((x,i)=>{const p=ps.find(z=>z.id===x.product_id)||ps[0];return `<div class="line-row ${finance?"":"no-cost"}" data-i="${i}">
     <div><label>產品</label><select class="lp">${ps.map(z=>`<option value="${z.id}" ${z.id===x.product_id?"selected":""}>${esc(z.category)}｜${esc(z.name)}</option>`).join("")}</select></div>
     <div><label>數量</label><input class="lq" type="number" min=".01" step=".01" value="${x.qty}"></div>
     <div class="price-col"><label>單價</label><input class="lv" type="number" min="0" step=".01" value="${(x.unit_price_cents/100).toFixed(2)}"></div>
