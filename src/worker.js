@@ -9,6 +9,7 @@ const ROLE_PERMISSIONS={
 const KNOWN_PERMISSIONS=["dashboard","orders.read","orders.write","orders.delete","delivery.read","customers.read","customers.write","customers.pii","products.read","products.write","expenses.read","expenses.write","investors.read","investors.write","reports.read","accounts.manage","audit.read","settings.read","settings.write","export.orders"];
 const PERM_GRANTS={
   "orders.write":["orders.read","products.read","delivery.read","customers.read","customers.write","customers.pii"],
+  "orders.delete":["orders.read"],
   "customers.write":["customers.read","customers.pii"],
   "products.write":["products.read"],
   "expenses.write":["expenses.read"],
