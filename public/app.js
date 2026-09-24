@@ -10,7 +10,7 @@ const ROLE_DEFAULTS={
   customer:[]
 };
 const PERM_LABELS=[
-  ["dashboard","總覽"],["orders.read","查看訂單"],["orders.write","新增／修改訂單"],["delivery.read","查看送貨"],
+  ["dashboard","總覽"],["orders.read","查看訂單"],["orders.write","新增／修改訂單"],["orders.delete","刪除訂單"],["delivery.read","查看送貨"],
   ["customers.read","查看客戶"],["customers.write","新增／修改客戶"],["customers.pii","查看客戶電話／地址"],
   ["products.read","查看產品"],["products.write","新增／修改產品"],["expenses.read","查看支出"],["expenses.write","新增支出"],
   ["investors.read","查看投資者"],["investors.write","管理投資者"],["reports.read","查看報表"],
@@ -199,13 +199,19 @@ async function pos(id){
 }
 async function orders(){
   if(!has("orders.read"))return location.hash="#/"+homeRoute();
-  const a=has("orders.write"),pii=has("customers.pii"),finance=has("reports.read"),canExport=has("export.orders");$("#content").innerHTML=head("訂單","搜尋、收款、利潤及送貨",a?'<button id="newO" class="btn primary">＋ 新訂單</button>':"")+`
+  const a=has("orders.write"),canDelete=has("orders.delete"),pii=has("customers.pii"),finance=has("reports.read"),canExport=has("export.orders");$("#content").innerHTML=head("訂單","搜尋、收款、利潤及送貨",a?'<button id="newO" class="btn primary">＋ 新訂單</button>':"")+`
   <div class="filters"><input id="q" placeholder="${pii?"訂單 / 客戶 / 電話":"訂單編號"}"><input id="from" type="date"><input id="to" type="date"><select id="pay"><option value="">全部付款</option><option value="unpaid">未付款</option><option value="partial">部分付款</option><option value="paid">已付款</option></select><button id="go" class="btn">搜尋</button>${canExport?'<button id="csv" class="btn">CSV</button>':""}</div><div id="box" class="card"></div>`;
   if(a)$("#newO").onclick=()=>location.hash="#/pos";
-  const load=async()=>{const p=new URLSearchParams();["q","from","to"].forEach(k=>{$("#"+k).value&&p.set(k,$("#"+k).value)});$("#pay").value&&p.set("payment",$("#pay").value);const x=await req("/api/orders?"+p),headers=["訂單","客戶","內容","總額","付款"],rows=(x.orders||[]).map(o=>[`<b>${esc(o.order_no)}</b><div class=muted>${esc(o.order_date)}</div>`,pii?`${esc(o.customer_name||"散客")}<div class=muted>${esc(o.customer_phone||"")}</div>`:"已隱藏客戶資料",esc(o.item_summary||""),money(o.total_cents),payBadge(o.payment_status)]);if(finance){headers.push("淨利");rows.forEach((r,i)=>{const o=x.orders[i];r.push(`<span class="${+o.net_profit_cents>=0?"positive":"negative"}">${money(o.net_profit_cents)}</span>`)})}headers.push("送貨","");rows.forEach((r,i)=>{const o=x.orders[i];r.push(`${badge(o.delivery_status)}<div class=muted>${esc(o.delivery_date||"")}</div>`,a?`<button class="btn small edit" data-id="${o.id}">修改</button>`:"")});$("#box").innerHTML=table(headers,rows);[...document.querySelectorAll(".edit")].forEach(b=>b.onclick=()=>location.hash="#/pos?edit="+encodeURIComponent(b.dataset.id))};
+  const load=async()=>{const p=new URLSearchParams();["q","from","to"].forEach(k=>{$("#"+k).value&&p.set(k,$("#"+k).value)});$("#pay").value&&p.set("payment",$("#pay").value);const x=await req("/api/orders?"+p),headers=["訂單","客戶","內容","總額","付款"],rows=(x.orders||[]).map(o=>[`<b>${esc(o.order_no)}</b><div class=muted>${esc(o.order_date)}</div>`,pii?`${esc(o.customer_name||"散客")}<div class=muted>${esc(o.customer_phone||"")}</div>`:"已隱藏客戶資料",esc(o.item_summary||""),money(o.total_cents),payBadge(o.payment_status)]);if(finance){headers.push("淨利");rows.forEach((r,i)=>{const o=x.orders[i];r.push(`<span class="${+o.net_profit_cents>=0?"positive":"negative"}">${money(o.net_profit_cents)}</span>`)})}headers.push("送貨","操作");rows.forEach((r,i)=>{const o=x.orders[i],actions=[a?`<button class="btn small edit" data-id="${o.id}">修改</button>`:"",canDelete?`<button class="btn small danger del-order" data-id="${o.id}">刪除</button>`:""].filter(Boolean).join(" ");r.push(`${badge(o.delivery_status)}<div class=muted>${esc(o.delivery_date||"")}</div>`,actions)});$("#box").innerHTML=table(headers,rows);$(".edit").forEach(b=>b.onclick=()=>location.hash="#/pos?edit="+encodeURIComponent(b.dataset.id));$(".del-order").forEach(b=>b.onclick=()=>deleteOrderModal((x.orders||[]).find(o=>o.id===b.dataset.id),load))};
   $("#go").onclick=load;$("#q").onkeydown=e=>e.key==="Enter"&&load();
   if(canExport)$("#csv").onclick=async()=>{try{const r=await fetch(API+"/api/export/orders.csv",{credentials:"include"});if(!r.ok)throw Error("匯出失敗");const b=await r.blob(),u=URL.createObjectURL(b),a=document.createElement("a");a.href=u;a.download="crab-pos-orders.csv";a.click();URL.revokeObjectURL(u)}catch(e){toast(e.message,"error")}};
   await load()
+}
+function deleteOrderModal(o,after){
+  if(!o)return;
+  modal("刪除訂單",`<form id="deleteOrderForm"><div class="review-user"><b>${esc(o.order_no)}</b><span>總額 ${money(o.total_cents)}</span></div><div class=field><label>刪除原因（會保留在操作紀錄）</label><textarea name=reason placeholder="例如：測試單、重複訂單、客戶取消"></textarea></div><div class="help">刪除後不會從資料庫真正移除；報表、訂單及送貨頁會隱藏，相關庫存會自動回補。</div><div class="modal-savebar"><button type=button id=cancelDelete class=btn>取消</button><button class="btn danger">確認刪除</button></div></form>`);
+  $("#cancelDelete").onclick=closeModal;
+  $("#deleteOrderForm").onsubmit=async e=>{e.preventDefault();const f=obj(e);try{await req("/api/orders/"+encodeURIComponent(o.id),{method:"DELETE",body:{reason:f.reason||""}});closeModal();await after();toast("訂單已刪除；操作紀錄已保留","success")}catch(er){toast(er.message,"error")}}
 }
 async function delivery(){
   if(!has("delivery.read")||!has("orders.read"))return location.hash="#/"+homeRoute();
@@ -293,7 +299,29 @@ function manageUserModal(u,ins,after){
 }
 function accountBadge(s,on){const m={pending:"待審批",active:on?"已啟用":"已停用",rejected:"已拒絕"};return `<span class="badge ${s==="active"&&on?"done":s==="pending"?"partial":"unpaid"}">${m[s]||esc(s)}</span>`}
 async function audit(){
-  if(!has("audit.read"))return location.hash="#/"+homeRoute();const x=await req("/api/audit");$("#content").innerHTML=head("操作紀錄","重要新增及修改紀錄")+`<div class=card>${table(["時間","人員","動作","類型","內容"],(x.logs||[]).map(l=>[esc(l.created_at),esc(l.user_name||"-"),esc(l.action),esc(l.entity_type),esc((l.after_json||"").slice(0,120))]))}</div>`
+  if(!has("audit.read"))return location.hash="#/"+homeRoute();const x=await req("/api/audit");$("#content").innerHTML=head("操作紀錄","建立、修改、審批及刪除紀錄")+`<div class=card>${table(["時間","人員","動作","類型","內容"],(x.logs||[]).map(l=>[esc(l.created_at),esc(l.user_name||"系統"),esc(auditActionLabel(l.action)),esc(auditEntityLabel(l.entity_type)),auditSummary(l)]))}</div>`
+}
+function safeJson(v){try{return JSON.parse(v||"{}")||{}}catch{return{}}}
+function auditActionLabel(x){return({CREATE:"建立",UPDATE:"修改",DELETE:"刪除",REGISTER:"申請",REVIEW:"審批"}[x]||x||"-")}
+function auditEntityLabel(x){return({order:"訂單",user:"帳戶",product:"產品",customer:"客戶",expense:"支出",investor:"投資者",settings:"設定"}[x]||x||"-")}
+function auditSummary(l){
+  const a=safeJson(l.after_json),b=safeJson(l.before_json),type=l.entity_type,act=l.action;
+  if(type==="order"){
+    const no=a.order_no||b.order_no||l.entity_id||"-",total=a.total_cents??b.total_cents;
+    if(act==="DELETE")return `<b>刪除訂單 ${esc(no)}</b>${total!==undefined?`<div class=muted>原總額：${money(total)}</div>`:""}${a.reason?`<div class=audit-note>原因：${esc(a.reason)}</div>`:""}`;
+    return `<b>${act==="CREATE"?"建立":"修改"}訂單 ${esc(no)}</b>${total!==undefined?`<div class=muted>總額：${money(total)}</div>`:""}`;
+  }
+  if(type==="user"){
+    const name=a.name||b.name||"-",email=a.email||b.email||"",role=ROLE_LABELS[a.access_role]||a.access_role||"";
+    if(act==="REGISTER")return `<b>申請帳戶：${esc(name)}</b>${email?`<div class=muted>${esc(email)}</div>`:""}`;
+    return `<b>帳戶：${esc(name)}</b>${role?`<div class=muted>身分：${esc(role)}</div>`:""}${a.account_status?`<div class=muted>狀態：${esc(a.account_status)}</div>`:""}`;
+  }
+  if(type==="product")return `<b>${act==="CREATE"?"新增":"修改"}產品：${esc(a.name||b.name||"-")}</b>`;
+  if(type==="customer")return `<b>${act==="CREATE"?"新增":"修改"}客戶：${esc(a.name||b.name||"-")}</b>`;
+  if(type==="expense")return `<b>${act==="CREATE"?"新增":"修改"}支出：${esc(a.description||a.desc||b.description||"-")}</b>${a.amount_cents!==undefined?`<div class=muted>${money(a.amount_cents)}</div>`:""}`;
+  if(type==="investor")return `<b>${act==="CREATE"?"新增":"修改"}投資者：${esc(a.name||b.name||"-")}</b>${a.percentage!==undefined?`<div class=muted>比例：${num(a.percentage)}%</div>`:""}`;
+  if(type==="settings")return "<b>修改系統設定</b>";
+  return `<span class=muted>${esc(a.message||auditEntityLabel(type)+" "+auditActionLabel(act))}</span>`
 }
 async function settings(){
   if(!has("settings.read"))return location.hash="#/"+homeRoute();const x=await req("/api/settings"),s=x.settings||{};$("#content").innerHTML=head("設定","公司資料、運費及免運規則")+`<div class=card><form id=sf class=form-grid>
@@ -309,7 +337,7 @@ async function settings(){
 
 function head(t,s="",a=""){return `<div class=page-head><div><h2>${esc(t)}</h2><p>${esc(s)}</p></div>${a?`<div class=actions>${a}</div>`:""}</div>`}
 function metric(l,v,s="",c=""){return `<div class="card metric ${c}"><div class=label>${esc(l)}</div><div class=value>${v}</div>${s?`<div class=sub>${esc(s)}</div>`:""}</div>`}
-function table(h,r){if(!r.length)return'<div class=empty>暫時沒有資料</div>';return `<div class=table-wrap><table><thead><tr>${h.map(x=>"<th>"+x+"</th>").join("")}</tr></thead><tbody>${r.map(x=>"<tr>"+x.map(y=>"<td>"+(y??"")+"</td>").join("")+"</tr>").join("")}</tbody></table></div>`}
+function table(h,r){if(!r.length)return'<div class=empty>暫時沒有資料</div>';return `<div class=table-wrap><table><thead><tr>${h.map(x=>"<th>"+x+"</th>").join("")}</tr></thead><tbody>${r.map(row=>"<tr>"+row.map((y,i)=>`<td data-label="${attr(h[i]||"")}">${y??""}</td>`).join("")+"</tr>").join("")}</tbody></table></div>`}
 function badge(x){return `<span class="badge ${x==="已完成"?"done":""}">${esc(x||"-")}</span>`}function payBadge(x){const m={paid:"已付款",partial:"部分付款",unpaid:"未付款",refunded:"已退款"};return `<span class="badge ${x}">${m[x]||esc(x)}</span>`}
 function inp(l,n,v="",ph="",type="text"){return `<label>${esc(l)}</label><input name="${n}" type="${type}" value="${attr(v)}" placeholder="${attr(ph)}">`}function moneyInp(l,n,c=0){return `<label>${esc(l)}</label><input name="${n}" type=number step=.01 min=0 value="${((+c||0)/100).toFixed(2)}">`}function sel(l,n,ops,v){return `<label>${esc(l)}</label><select name="${n}">${ops.map(o=>`<option value="${attr(o[0])}" ${String(o[0])===String(v)?"selected":""}>${esc(o[1])}</option>`).join("")}</select>`}function field(l,n,t="text",v=""){return `<div class=field>${inp(l,n,v,"",t)}</div>`}
 function modal(t,h){const d=document.createElement("div");d.id="modal";d.className="modal-backdrop";d.innerHTML=`<div class=modal><div class=modal-head><h3>${esc(t)}</h3><button id=mc class="btn small">×</button></div>${h}</div>`;document.body.appendChild(d);$("#mc").onclick=closeModal;d.onclick=e=>e.target===d&&closeModal()}function closeModal(){$("#modal")?.remove()}
