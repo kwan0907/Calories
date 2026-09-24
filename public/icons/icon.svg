@@ -1,15 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="112" fill="#090909"/>
-  <g fill="#d9b45b" stroke="#d9b45b" stroke-width="18" stroke-linecap="round">
-    <ellipse cx="256" cy="275" rx="118" ry="92" stroke="none"/>
-    <circle cx="204" cy="156" r="18" stroke="none"/>
-    <circle cx="308" cy="156" r="18" stroke="none"/>
-    <ellipse cx="92" cy="214" rx="58" ry="46" stroke="none"/>
-    <ellipse cx="420" cy="214" rx="58" ry="46" stroke="none"/>
-    <path d="M162 255L72 302M158 302L72 365M350 255L440 302M354 302L440 365" fill="none"/>
-  </g>
-  <g fill="#090909">
-    <ellipse cx="112" cy="218" rx="35" ry="22"/>
-    <ellipse cx="400" cy="218" rx="35" ry="22"/>
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+<defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#070604"/><stop offset="1" stop-color="#171108"/></linearGradient><linearGradient id="gold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F6DE8A"/><stop offset=".55" stop-color="#D8AF4F"/><stop offset="1" stop-color="#9C6A19"/></linearGradient></defs>
+<rect width="1024" height="1024" rx="224" fill="url(#bg)"/><rect x="48" y="48" width="928" height="928" rx="192" fill="none" stroke="#3A2B12" stroke-width="16"/><circle cx="512" cy="498" r="316" fill="#0B0906" stroke="url(#gold)" stroke-width="30"/>
+<path d="M312 376c-77-54-165-23-191 43 35-11 70-1 91 29-25 17-41 44-43 74 66 5 121-29 153-84zM712 376c77-54 165-23 191 43-35-11-70-1-91 29 25 17 41 44 43 74-66 5-121-29-153-84z" fill="url(#gold)"/>
+<path d="M320 438L206 560M704 438l114 122" fill="none" stroke="#D8AF4F" stroke-width="30" stroke-linecap="round"/>
+<path d="M352 445c32-97 287-97 320 0l40 132c19 62-28 126-93 126H405c-65 0-112-64-93-126z" fill="url(#gold)"/>
+<circle cx="431" cy="393" r="28" fill="#F6DE8A"/><circle cx="593" cy="393" r="28" fill="#F6DE8A"/><circle cx="431" cy="393" r="11" fill="#0B0906"/><circle cx="593" cy="393" r="11" fill="#0B0906"/>
+<rect x="408" y="500" width="208" height="142" rx="28" fill="#0B0906"/><path d="M449 543h126M449 584h82" fill="none" stroke="#F6DE8A" stroke-width="18" stroke-linecap="round"/><circle cx="568" cy="584" r="13" fill="#F6DE8A"/>
+<path d="M368 616l-88 75M404 666l-62 98M656 616l88 75M620 666l62 98" fill="none" stroke="#C89532" stroke-width="28" stroke-linecap="round"/><path d="M438 792h148" stroke="#6D4D1D" stroke-width="16" stroke-linecap="round"/>
 </svg>
