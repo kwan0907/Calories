@@ -155,10 +155,11 @@ async function api(req,env,u){
   }
   mm=p.match(/^\/api\/customers\/([^/]+)$/);
   if(mm&&m==="PATCH"){
-    need(user,"customers.write"); const id=mm[1],old=await env.DB.prepare("SELECT * FROM customers WHERE id=?").bind(id).first(); if(!old)return nf();
-    const x=customer({...old,...await body(req)});
-    await env.DB.prepare("UPDATE customers SET name=?,phone=?,address=?,notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(x.name,x.phone,x.address,x.notes,id).run();
-    await audit(env,user.id,"UPDATE","customer",id,{name:old.name,phone:mask(old.phone)},{name:x.name,phone:mask(x.phone)}); return j({ok:true});
+    need(user,"customers.write"); return j(await updateCustomer(env,user,mm[1],await body(req)));
+  }
+  mm=p.match(/^\/api\/customers\/([^/]+)\/save$/);
+  if(mm&&m==="POST"){
+    need(user,"customers.write"); return j(await updateCustomer(env,user,mm[1],await body(req)));
   }
 
   if(p==="/api/orders"&&m==="GET"){
@@ -186,6 +187,8 @@ async function api(req,env,u){
     return j({ok:true,order:o,items:outItems});
   }
   if(mm&&m==="PATCH"){need(user,"orders.write");return j(await saveOrder(env,user,await body(req),mm[1]))}
+  mm=p.match(/^\/api\/orders\/([^/]+)\/save$/);
+  if(mm&&m==="POST"){need(user,"orders.write");return j(await saveOrder(env,user,await body(req),mm[1]))}
   if(mm&&m==="DELETE"){
     need(user,"orders.delete");
     return j(await softDeleteOrder(env,user,mm[1],await body(req)));
@@ -211,11 +214,11 @@ async function api(req,env,u){
   }
   mm=p.match(/^\/api\/expenses\/([^/]+)$/);
   if(mm&&m==="PATCH"){
-    need(user,"expenses.write"); const id=mm[1],old=await env.DB.prepare("SELECT * FROM expenses WHERE id=?").bind(id).first(); if(!old)return nf();
-    const b=await body(req),d=s(b.expense_date??old.expense_date,10),type=s(b.type??old.type,80),desc=s(b.description??old.description,200),amt=Math.max(0,int(b.amount_cents??old.amount_cents)),notes=s(b.notes??old.notes,1000);
-    if(!desc)throw bad("支出說明必填");
-    await env.DB.prepare("UPDATE expenses SET expense_date=?,type=?,description=?,amount_cents=?,notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(d,type,desc,amt,notes,id).run();
-    await audit(env,user.id,"UPDATE","expense",id,old,{expense_date:d,type,description:desc,amount_cents:amt,notes}); return j({ok:true});
+    need(user,"expenses.write"); return j(await updateExpense(env,user,mm[1],await body(req)));
+  }
+  mm=p.match(/^\/api\/expenses\/([^/]+)\/save$/);
+  if(mm&&m==="POST"){
+    need(user,"expenses.write"); return j(await updateExpense(env,user,mm[1],await body(req)));
   }
 
   if(p==="/api/investors"&&m==="GET"){
@@ -234,12 +237,11 @@ async function api(req,env,u){
   }
   mm=p.match(/^\/api\/investors\/([^/]+)$/);
   if(mm&&m==="PATCH"){
-    need(user,"investors.write"); const id=mm[1],old=await env.DB.prepare("SELECT * FROM investors WHERE id=?").bind(id).first(); if(!old)return nf();
-    const b=await body(req),name=s(b.name??old.name,120),pct=Number(b.percentage??old.percentage),active=b.is_active==null?(+old.is_active||0):(b.is_active===0||b.is_active==="0"?0:1),notes=s(b.notes??old.notes,1000);
-    if(!name||!Number.isFinite(pct)||pct<0||pct>100)throw bad("名稱或比例不正確");
-    if(active){const t=await env.DB.prepare("SELECT COALESCE(SUM(percentage),0) n FROM investors WHERE is_active=1 AND id<>?").bind(id).first();if((+t.n||0)+pct>100.0001)throw bad("啟用中的投資比例不可超過 100%")}
-    await env.DB.prepare("UPDATE investors SET name=?,percentage=?,is_active=?,notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(name,pct,active,notes,id).run();
-    await audit(env,user.id,"UPDATE","investor",id,old,{name,percentage:pct,is_active:active,notes}); return j({ok:true});
+    need(user,"investors.write"); return j(await updateInvestor(env,user,mm[1],await body(req)));
+  }
+  mm=p.match(/^\/api\/investors\/([^/]+)\/save$/);
+  if(mm&&m==="POST"){
+    need(user,"investors.write"); return j(await updateInvestor(env,user,mm[1],await body(req)));
   }
 
   if(p==="/api/users"&&m==="GET"){
@@ -257,37 +259,21 @@ async function api(req,env,u){
   }
   mm=p.match(/^\/api\/users\/([^/]+)$/);
   if(mm&&m==="PATCH"){
-    need(user,"accounts.manage"); const id=mm[1],old=await env.DB.prepare("SELECT * FROM users WHERE id=?").bind(id).first(); if(!old)return nf();
-    const b=await body(req),access=validRole(b.access_role||old.access_role||old.role),status=["pending","active","rejected"].includes(b.account_status)?b.account_status:(old.account_status||"active");
-    if(id===user.id&&(status!=="active"||access!=="admin")) throw bad("不可停用或降級目前登入中的管理員帳戶");
-    const name=s(b.name??old.name,80),email=s(b.email??old.email,180).toLowerCase(),newPassword=String(b.password||"");
-    if(!name||!email.includes("@")) throw bad("名稱及 Email 必填");
-    if(newPassword&&newPassword.length<10) throw bad("新密碼至少 10 個字元");
-    const dup=await env.DB.prepare("SELECT id FROM users WHERE email=? COLLATE NOCASE AND id<>? LIMIT 1").bind(email,id).first();
-    if(dup) throw bad("這個 Email 已被其他帳戶使用",409);
-    const perms=normalizePerms(Array.isArray(b.permissions)?b.permissions:parsePerms(old.permissions_json),access),legacy=access==="admin"?"admin":"investor",iid=access==="investor"&&b.investor_id?s(b.investor_id,80):null,active=status==="active"?(b.is_active===0?0:1):0;
-    const ph=newPassword?await pass(newPassword):null;
-    if(ph){
-      await env.DB.prepare(`UPDATE users SET name=?,email=?,password_hash=?,password_salt=?,role=?,access_role=?,permissions_json=?,account_status=?,investor_id=?,is_active=?,reviewed_at=CURRENT_TIMESTAMP,reviewed_by=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
-        .bind(name,email,ph.hash,ph.salt,legacy,access,JSON.stringify(perms),status,iid,active,user.id,id).run();
-    }else{
-      await env.DB.prepare(`UPDATE users SET name=?,email=?,role=?,access_role=?,permissions_json=?,account_status=?,investor_id=?,is_active=?,reviewed_at=CURRENT_TIMESTAMP,reviewed_by=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
-        .bind(name,email,legacy,access,JSON.stringify(perms),status,iid,active,user.id,id).run();
-    }
-    if(id!==user.id) await env.DB.prepare("DELETE FROM sessions WHERE user_id=?").bind(id).run();
-    else if(!active) await env.DB.prepare("DELETE FROM sessions WHERE user_id=?").bind(id).run();
-    await audit(env,user.id,"REVIEW","user",id,{name:old.name,email:old.email,account_status:old.account_status,access_role:old.access_role},{name,email,account_status:status,access_role:access,permissions:perms,password_reset:!!newPassword});
-    return j({ok:true});
+    need(user,"accounts.manage"); return j(await updateUserAccount(env,user,mm[1],await body(req)));
+  }
+  mm=p.match(/^\/api\/users\/([^/]+)\/save$/);
+  if(mm&&m==="POST"){
+    need(user,"accounts.manage"); return j(await updateUserAccount(env,user,mm[1],await body(req)));
   }
 
   if(p==="/api/settings"&&m==="GET"){
     need(user,"settings.read"); const x=await settings(env); return j({ok:true,settings:x});
   }
   if(p==="/api/settings"&&m==="PATCH"){
-    need(user,"settings.write"); const b=await body(req),allow=["business_name","currency","order_prefix","default_delivery_cost_cents","customer_delivery_fee_cents","free_shipping_threshold_cents","free_shipping_basis"],q=[];
-    for(const k of allow) if(k in b) q.push(env.DB.prepare(`INSERT INTO settings(key,value,updated_at) VALUES(?,?,CURRENT_TIMESTAMP)
-      ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=CURRENT_TIMESTAMP`).bind(k,String(b[k])));
-    if(q.length)await env.DB.batch(q); await audit(env,user.id,"UPDATE","settings","global",null,b); return j({ok:true});
+    need(user,"settings.write"); return j(await updateSettings(env,user,await body(req)));
+  }
+  if(p==="/api/settings/save"&&m==="POST"){
+    need(user,"settings.write"); return j(await updateSettings(env,user,await body(req)));
   }
 
   if(p==="/api/audit"){
@@ -323,6 +309,73 @@ async function api(req,env,u){
   }
 
   return nf();
+}
+
+async function updateCustomer(env,user,id,b){
+  const old=await env.DB.prepare("SELECT * FROM customers WHERE id=?").bind(id).first();
+  if(!old)throw bad("找不到客戶",404);
+  const x=customer({...old,...b});
+  await env.DB.prepare("UPDATE customers SET name=?,phone=?,address=?,notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(x.name,x.phone,x.address,x.notes,id).run();
+  await audit(env,user.id,"UPDATE","customer",id,{name:old.name,phone:mask(old.phone)},{name:x.name,phone:mask(x.phone)});
+  return {ok:true,id};
+}
+
+async function updateExpense(env,user,id,b){
+  const old=await env.DB.prepare("SELECT * FROM expenses WHERE id=?").bind(id).first();
+  if(!old)throw bad("找不到支出",404);
+  const d=s(b.expense_date??old.expense_date,10),type=s(b.type??old.type,80),desc=s(b.description??old.description,200),amt=Math.max(0,int(b.amount_cents??old.amount_cents)),notes=s(b.notes??old.notes,1000);
+  if(!desc)throw bad("支出說明必填");
+  await env.DB.prepare("UPDATE expenses SET expense_date=?,type=?,description=?,amount_cents=?,notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(d,type,desc,amt,notes,id).run();
+  await audit(env,user.id,"UPDATE","expense",id,old,{expense_date:d,type,description:desc,amount_cents:amt,notes});
+  return {ok:true,id};
+}
+
+async function updateInvestor(env,user,id,b){
+  const old=await env.DB.prepare("SELECT * FROM investors WHERE id=?").bind(id).first();
+  if(!old)throw bad("找不到投資者",404);
+  const name=s(b.name??old.name,120),pct=Number(b.percentage??old.percentage),active=b.is_active==null?(+old.is_active||0):(b.is_active===0||b.is_active==="0"?0:1),notes=s(b.notes??old.notes,1000);
+  if(!name||!Number.isFinite(pct)||pct<0||pct>100)throw bad("名稱或比例不正確");
+  if(active){
+    const t=await env.DB.prepare("SELECT COALESCE(SUM(percentage),0) n FROM investors WHERE is_active=1 AND id<>?").bind(id).first();
+    if((+t.n||0)+pct>100.0001)throw bad("啟用中的投資比例不可超過 100%");
+  }
+  await env.DB.prepare("UPDATE investors SET name=?,percentage=?,is_active=?,notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(name,pct,active,notes,id).run();
+  await audit(env,user.id,"UPDATE","investor",id,old,{name,percentage:pct,is_active:active,notes});
+  return {ok:true,id};
+}
+
+async function updateUserAccount(env,user,id,b){
+  const old=await env.DB.prepare("SELECT * FROM users WHERE id=?").bind(id).first();
+  if(!old)throw bad("找不到帳戶",404);
+  const access=validRole(b.access_role||old.access_role||old.role),status=["pending","active","rejected"].includes(b.account_status)?b.account_status:(old.account_status||"active");
+  if(id===user.id&&(status!=="active"||access!=="admin")) throw bad("不可停用或降級目前登入中的管理員帳戶");
+  const name=s(b.name??old.name,80),email=s(b.email??old.email,180).toLowerCase(),newPassword=String(b.password||"");
+  if(!name||!email.includes("@")) throw bad("名稱及 Email 必填");
+  if(newPassword&&newPassword.length<10) throw bad("新密碼至少 10 個字元");
+  const dup=await env.DB.prepare("SELECT id FROM users WHERE email=? COLLATE NOCASE AND id<>? LIMIT 1").bind(email,id).first();
+  if(dup) throw bad("這個 Email 已被其他帳戶使用",409);
+  const perms=normalizePerms(Array.isArray(b.permissions)?b.permissions:parsePerms(old.permissions_json),access),legacy=access==="admin"?"admin":"investor",iid=access==="investor"&&b.investor_id?s(b.investor_id,80):null,active=status==="active"?(b.is_active===0?0:1):0;
+  const ph=newPassword?await pass(newPassword):null;
+  if(ph){
+    await env.DB.prepare(`UPDATE users SET name=?,email=?,password_hash=?,password_salt=?,role=?,access_role=?,permissions_json=?,account_status=?,investor_id=?,is_active=?,reviewed_at=CURRENT_TIMESTAMP,reviewed_by=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+      .bind(name,email,ph.hash,ph.salt,legacy,access,JSON.stringify(perms),status,iid,active,user.id,id).run();
+  }else{
+    await env.DB.prepare(`UPDATE users SET name=?,email=?,role=?,access_role=?,permissions_json=?,account_status=?,investor_id=?,is_active=?,reviewed_at=CURRENT_TIMESTAMP,reviewed_by=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+      .bind(name,email,legacy,access,JSON.stringify(perms),status,iid,active,user.id,id).run();
+  }
+  if(id!==user.id) await env.DB.prepare("DELETE FROM sessions WHERE user_id=?").bind(id).run();
+  else if(!active) await env.DB.prepare("DELETE FROM sessions WHERE user_id=?").bind(id).run();
+  await audit(env,user.id,"REVIEW","user",id,{name:old.name,email:old.email,account_status:old.account_status,access_role:old.access_role},{name,email,account_status:status,access_role:access,permissions:perms,password_reset:!!newPassword});
+  return {ok:true,id};
+}
+
+async function updateSettings(env,user,b){
+  const allow=["business_name","currency","order_prefix","default_delivery_cost_cents","customer_delivery_fee_cents","free_shipping_threshold_cents","free_shipping_basis"],q=[];
+  for(const k of allow) if(k in b) q.push(env.DB.prepare(`INSERT INTO settings(key,value,updated_at) VALUES(?,?,CURRENT_TIMESTAMP)
+    ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=CURRENT_TIMESTAMP`).bind(k,String(b[k])));
+  if(q.length)await env.DB.batch(q);
+  await audit(env,user.id,"UPDATE","settings","global",null,b);
+  return {ok:true};
 }
 
 async function saveProduct(env,user,id,b){
