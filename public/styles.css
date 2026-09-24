@@ -276,9 +276,10 @@ button,.btn,.nav button,.mobile-nav button,.more-grid button,.discount-pill,.shi
 }
 button:focus-visible,.btn:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
 .net-state{
-  position:sticky;top:0;z-index:45;text-align:center;padding:7px 12px;
-  background:#442626;color:#ffd2d2;border-bottom:1px solid #7a3b3b;
-  font-size:12px;font-weight:800
+  position:fixed;left:50%;bottom:18px;z-index:95;transform:translateX(-50%);
+  width:max-content;max-width:calc(100vw - 28px);text-align:center;padding:8px 12px;
+  background:#442626;color:#ffd2d2;border:1px solid #7a3b3b;border-radius:999px;
+  box-shadow:0 8px 28px rgba(0,0,0,.35);font-size:12px;font-weight:800
 }
 .error-state{display:flex;flex-direction:column;align-items:center;gap:10px}
 .error-state b{color:var(--text);font-size:16px}
@@ -287,7 +288,7 @@ button:focus-visible,.btn:focus-visible{outline:2px solid var(--gold);outline-of
 .card,.metric,.audit-card,.money-tool-card{contain:layout paint}
 .table-wrap{-webkit-overflow-scrolling:touch}
 @media(max-width:760px){
-  .net-state{top:calc(62px + var(--safe-top));font-size:11px;padding:6px 10px}
+  .net-state{bottom:calc(78px + var(--safe-bottom));font-size:11px;padding:7px 10px}
   .content{-webkit-overflow-scrolling:touch}
   .mobile-nav button,.more-grid button{min-height:56px}
   .btn{min-height:44px}
