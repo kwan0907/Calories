@@ -13,7 +13,7 @@
     {
       "binding": "DB",
       "database_name": "crab-pos-db",
-      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "database_id": "9619070f-6a31-4315-8741-b08ec7ac8cfb",
       "migrations_dir": "migrations"
     }
   ]
