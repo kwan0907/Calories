@@ -189,7 +189,7 @@ async function users(){
   bind();$("#add").onclick=()=>userModal(i.investors||[],()=>users())
 }
 function permsHtml(selected=[]){return `<div class="perm-grid">${PERM_LABELS.map(([k,l])=>`<label class="perm-item"><input type="checkbox" name="perm" value="${attr(k)}" ${selected.includes("*")||selected.includes(k)?"checked":""}><span>${esc(l)}</span></label>`).join("")}</div>`}
-function roleOptions(v){return sel("身分","access_role",[["admin","管理員"],["staff","員工"],["investor","投資者"],["viewer","只讀"]],v)}
+function roleOptions(v){return sel("身分","access_role",[["admin","管理員"],["staff","員工"],["investor","投資者"],["viewer","只讀"],["customer","客戶（暫無後台功能）"]],v)}
 function collectPerms(form,role){if(role==="admin")return["*"];return [...form.querySelectorAll('input[name="perm"]:checked')].map(x=>x.value)}
 function wireRoleDefaults(form,roleSel){roleSel.onchange=()=>{const d=ROLE_DEFAULTS[roleSel.value]||[];form.querySelectorAll('input[name="perm"]').forEach(x=>x.checked=d.includes("*")||d.includes(x.value))}}
 function toggleInvestorLink(form,roleSel){const box=form.querySelector("[data-investor-link]");if(!box)return;box.classList.toggle("is-hidden",roleSel.value!=="investor");if(roleSel.value!=="investor"){const x=box.querySelector('[name="investor_id"]');if(x)x.value=""}}
