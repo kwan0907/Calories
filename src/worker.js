@@ -358,7 +358,7 @@ async function saveOrder(env,user,b,id){
       if(!p)throw bad("找不到產品");
       const qty=+x.qty||0;
       if(qty<=0)throw bad("數量不正確");
-      const price=x.unit_price_cents==null?+p.sale_price_cents:int(x.unit_price_cents);
+      const price=x.unit_price_cents==null?Math.max(0,+p.sale_price_cents||0):Math.max(0,int(x.unit_price_cents));
       const cost=id&&oldCost.has(p.id)?oldCost.get(p.id):(+p.cost_cents||0);
       items.push({id:crypto.randomUUID(),product_id:p.id,name:p.name,unit:p.unit,qty,price,cost,total:Math.round(qty*price),linecost:Math.round(qty*cost)});
     }
@@ -415,7 +415,7 @@ async function saveOrder(env,user,b,id){
 
 async function currentUser(req,env){const t=cookie(req,COOKIE);if(!t)return null;return await env.DB.prepare(`SELECT u.id,u.name,u.email,u.role,u.access_role,u.permissions_json,u.account_status,u.investor_id,u.is_active,i.name investor_name,i.percentage investor_percentage
   FROM sessions s JOIN users u ON u.id=s.user_id LEFT JOIN investors i ON i.id=u.investor_id WHERE s.token_hash=? AND s.expires_at>CURRENT_TIMESTAMP AND u.is_active=1 AND u.account_status='active' LIMIT 1`).bind(await sha(t)).first()}
-async function sessionResponse(env,uid,payload){const t=token(),exp=new Date(Date.now()+DAYS*864e5).toISOString();await env.DB.prepare("INSERT INTO sessions(id,user_id,token_hash,expires_at) VALUES(?,?,?,?)").bind(crypto.randomUUID(),uid,await sha(t),exp).run();return j(payload,200,{"Set-Cookie":`${COOKIE}=${t}; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=${DAYS*86400}`})}
+async function sessionResponse(env,uid,payload){const t=token(),exp=new Date(Date.now()+DAYS*864e5).toISOString();await env.DB.batch([env.DB.prepare("DELETE FROM sessions WHERE expires_at<=CURRENT_TIMESTAMP"),env.DB.prepare("INSERT INTO sessions(id,user_id,token_hash,expires_at) VALUES(?,?,?,?)").bind(crypto.randomUUID(),uid,await sha(t),exp)]);return j(payload,200,{"Set-Cookie":`${COOKIE}=${t}; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=${DAYS*86400}`})}
 function clearCookie(){return `${COOKIE}=; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=0`}
 function cookie(req,n){for(const p of (req.headers.get("cookie")||"").split(";")){const [k,...v]=p.trim().split("=");if(k===n)return v.join("=")}return""}
 async function pass(p){const salt=crypto.getRandomValues(new Uint8Array(16)),hash=await derive(p,salt);return{salt:b64(salt),hash}}
@@ -426,8 +426,8 @@ function token(){return b64(crypto.getRandomValues(new Uint8Array(32))).replace(
 function b64(a){let s="";for(const b of a)s+=String.fromCharCode(b);return btoa(s)}function fromb64(s){const x=atob(s),a=new Uint8Array(x.length);for(let i=0;i<x.length;i++)a[i]=x.charCodeAt(i);return a}
 async function settings(env){const r=await env.DB.prepare("SELECT key,value FROM settings").all();return Object.fromEntries((r.results||[]).map(x=>[x.key,x.value]))}
 async function audit(env,uid,act,type,id,before,after){try{await env.DB.prepare("INSERT INTO audit_logs(id,user_id,action,entity_type,entity_id,before_json,after_json) VALUES(?,?,?,?,?,?,?)").bind(crypto.randomUUID(),uid,act,type,id||"",before?JSON.stringify(before):null,after?JSON.stringify(after):null).run()}catch{}}
-async function orderNo(env,d){const x=await settings(env),pre=(x.order_prefix||"CRAB").replace(/[^A-Z0-9_-]/gi,"")||"CRAB";return `${pre}-${d.replace(/-/g,"")}-${Math.floor(Math.random()*10000).toString().padStart(4,"0")}`}
-function product(b){const name=s(b.name,120);if(!name)throw bad("產品名稱必填");return{name,sku:s(b.sku||"",50),category:s(b.category||"其他",80),unit:s(b.unit||"隻",20),cost_cents:Math.max(0,int(b.cost_cents)),sale_price_cents:Math.max(0,int(b.sale_price_cents)),track_stock:bool(b.track_stock),stock_qty:+b.stock_qty||0,is_active:b.is_active===0||b.is_active==="0"?0:1}}
+async function orderNo(env,d){const x=await settings(env),pre=(x.order_prefix||"CRAB").replace(/[^A-Z0-9_-]/gi,"")||"CRAB";return `${pre}-${d.replace(/-/g,"")}-${Math.floor(Math.random()*1000000).toString().padStart(6,"0")}`}
+function product(b){const name=s(b.name,120);if(!name)throw bad("產品名稱必填");return{name,sku:s(b.sku||"",50),category:s(b.category||"其他",80),unit:s(b.unit||"隻",20),cost_cents:Math.max(0,int(b.cost_cents)),sale_price_cents:Math.max(0,int(b.sale_price_cents)),track_stock:bool(b.track_stock),stock_qty:Math.max(0,+b.stock_qty||0),is_active:b.is_active===0||b.is_active==="0"?0:1}}
 function customer(b){const name=s(b.name||"散客",120);return{name,phone:s(b.phone||"",50),address:s(b.address||"",400),notes:s(b.notes||"",1000)}}
 function parsePerms(v){if(Array.isArray(v))return v;try{const x=JSON.parse(v||"[]");return Array.isArray(x)?x:[]}catch{return[]}}
 function roleOf(u){return u.access_role||u.role||"viewer"}
@@ -439,7 +439,7 @@ function hideOrderFinance(x){const y={...x};for(const k of ["product_cost_cents"
 function safeUser(u){return{id:u.id,name:u.name,email:u.email,role:u.role,access_role:roleOf(u),permissions:parsePerms(u.permissions_json||u.permissions),account_status:u.account_status||"active",investor_id:u.investor_id||null,investor_name:u.investor_name||null,investor_percentage:+u.investor_percentage||0}}
 function admin(u){if(roleOf(u)!=="admin")throw bad("沒有權限",403)}function bad(msg,status=400){const e=new Error(msg);e.status=status;return e}function nf(){return j({ok:false,message:"找不到資料"},404)}
 function s(v,n=500){return String(v??"").trim().replace(/\0/g,"").slice(0,n)}function int(v){const n=Number(v);return Number.isFinite(n)?Math.round(n):0}function bool(v){return v===1||v==="1"||v===true?1:0}function nums(o){const x={};for(const[k,v]of Object.entries(o||{}))x[k]=/(_cents|count)$/.test(k)?+v||0:v;return x}
-function dateNow(){return new Date().toISOString().slice(0,10)}function money(c){return((+c||0)/100).toFixed(2)}function mask(x){x=String(x||"");return x.length<5?"***":x.slice(0,2)+"***"+x.slice(-2)}function csv(v){return '"'+String(v??"").replace(/"/g,'""')+'"'}
+function dateNow(){return new Date().toISOString().slice(0,10)}function money(c){return((+c||0)/100).toFixed(2)}function mask(x){x=String(x||"");return x.length<5?"***":x.slice(0,2)+"***"+x.slice(-2)}function csv(v){let x=String(v??"");if(/^[=+\-@]/.test(x))x="'"+x;return '"'+x.replace(/"/g,'""')+'"'}
 async function body(req){try{return await req.json()}catch{return{}}}
 function j(x,status=200,h={}){return new Response(JSON.stringify(x),{status,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store",...h}})}
 function cors(res,req,env){const origin=req.headers.get("origin"),allow=env.ALLOWED_ORIGIN||"";if(origin&&allow&&(origin===allow||allow==="*")){res.headers.set("Access-Control-Allow-Origin",origin);res.headers.set("Access-Control-Allow-Credentials","true");res.headers.set("Access-Control-Allow-Headers","content-type");res.headers.set("Access-Control-Allow-Methods","GET,POST,PATCH,OPTIONS");res.headers.set("Vary","Origin")}return res}
