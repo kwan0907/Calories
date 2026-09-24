@@ -229,7 +229,7 @@ function manageUserModal(u,ins,after){
     try{
       await req("/api/users/"+u.id,{method:"PATCH",body:b});
       if(u.id===S.user.id){S.user.name=b.name;S.user.email=b.email}
-      status.textContent="已儲存";status.className="form-status success";toast("帳戶設定已更新","success");
+      const msg=u.id===S.user.id?"帳戶設定已更新":"帳戶設定已更新；對方需重新登入";status.textContent="已儲存";status.className="form-status success";toast(msg,"success");
       setTimeout(()=>{closeModal();after()},250);
     }catch(er){
       btn.disabled=false;btn.textContent="儲存帳戶設定";status.textContent=er.message;status.className="form-status error";toast(er.message,"error");
