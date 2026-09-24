@@ -199,6 +199,14 @@ async function api(req,env,u){
     await env.DB.prepare("INSERT INTO expenses(id,expense_date,type,description,amount_cents,notes,created_by) VALUES(?,?,?,?,?,?,?)").bind(id,d,type,desc,amt,notes,user.id).run();
     await audit(env,user.id,"CREATE","expense",id,null,{d,type,desc,amt}); return j({ok:true,id},201);
   }
+  mm=p.match(/^\/api\/expenses\/([^/]+)$/);
+  if(mm&&m==="PATCH"){
+    need(user,"expenses.write"); const id=mm[1],old=await env.DB.prepare("SELECT * FROM expenses WHERE id=?").bind(id).first(); if(!old)return nf();
+    const b=await body(req),d=s(b.expense_date??old.expense_date,10),type=s(b.type??old.type,80),desc=s(b.description??old.description,200),amt=Math.max(0,int(b.amount_cents??old.amount_cents)),notes=s(b.notes??old.notes,1000);
+    if(!desc)throw bad("支出說明必填");
+    await env.DB.prepare("UPDATE expenses SET expense_date=?,type=?,description=?,amount_cents=?,notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(d,type,desc,amt,notes,id).run();
+    await audit(env,user.id,"UPDATE","expense",id,old,{expense_date:d,type,description:desc,amount_cents:amt,notes}); return j({ok:true});
+  }
 
   if(p==="/api/investors"&&m==="GET"){
     need(user,"investors.read");
@@ -209,10 +217,19 @@ async function api(req,env,u){
     const r=await env.DB.prepare("SELECT * FROM investors ORDER BY is_active DESC,name").all(); return j({ok:true,investors:r.results||[]});
   }
   if(p==="/api/investors"&&m==="POST"){
-    need(user,"investors.write"); const b=await body(req),name=s(b.name,120),pct=+b.percentage||0,id=crypto.randomUUID(); if(!name||pct<0||pct>100)throw bad("名稱或比例不正確");
-    const t=await env.DB.prepare("SELECT COALESCE(SUM(percentage),0) n FROM investors WHERE is_active=1").first(); if((+t.n||0)+pct>100.0001)throw bad("啟用中的投資比例不可超過 100%");
-    await env.DB.prepare("INSERT INTO investors(id,name,percentage,is_active,notes) VALUES(?,?,?,?,?)").bind(id,name,pct,b.is_active===0?0:1,s(b.notes||"",1000)).run();
-    await audit(env,user.id,"CREATE","investor",id,null,{name,pct}); return j({ok:true,id},201);
+    need(user,"investors.write"); const b=await body(req),name=s(b.name,120),pct=+b.percentage||0,id=crypto.randomUUID(),active=b.is_active===0||b.is_active==="0"?0:1; if(!name||pct<0||pct>100)throw bad("名稱或比例不正確");
+    if(active){const t=await env.DB.prepare("SELECT COALESCE(SUM(percentage),0) n FROM investors WHERE is_active=1").first(); if((+t.n||0)+pct>100.0001)throw bad("啟用中的投資比例不可超過 100%")}
+    await env.DB.prepare("INSERT INTO investors(id,name,percentage,is_active,notes) VALUES(?,?,?,?,?)").bind(id,name,pct,active,s(b.notes||"",1000)).run();
+    await audit(env,user.id,"CREATE","investor",id,null,{name,pct,is_active:active}); return j({ok:true,id},201);
+  }
+  mm=p.match(/^\/api\/investors\/([^/]+)$/);
+  if(mm&&m==="PATCH"){
+    need(user,"investors.write"); const id=mm[1],old=await env.DB.prepare("SELECT * FROM investors WHERE id=?").bind(id).first(); if(!old)return nf();
+    const b=await body(req),name=s(b.name??old.name,120),pct=Number(b.percentage??old.percentage),active=b.is_active===0||b.is_active==="0"?0:1,notes=s(b.notes??old.notes,1000);
+    if(!name||!Number.isFinite(pct)||pct<0||pct>100)throw bad("名稱或比例不正確");
+    if(active){const t=await env.DB.prepare("SELECT COALESCE(SUM(percentage),0) n FROM investors WHERE is_active=1 AND id<>?").bind(id).first();if((+t.n||0)+pct>100.0001)throw bad("啟用中的投資比例不可超過 100%")}
+    await env.DB.prepare("UPDATE investors SET name=?,percentage=?,is_active=?,notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(name,pct,active,notes,id).run();
+    await audit(env,user.id,"UPDATE","investor",id,old,{name,percentage:pct,is_active:active,notes}); return j({ok:true});
   }
 
   if(p==="/api/users"&&m==="GET"){
