@@ -86,7 +86,7 @@ function route(){
   const raw=(location.hash||"#/dashboard").replace(/^#\//,""),[r,q=""]=raw.split("?"),p=new URLSearchParams(q);
   [...document.querySelectorAll(".nav button")].forEach(b=>b.classList.toggle("active",b.dataset.r===r));
   const map={dashboard,orders,delivery,customers,products,expenses,investors,reports,users,audit,settings,noaccess,pos:()=>pos(p.get("edit"))};
-  (map[r]||noaccess)().catch(e=>{toast(e.message,"error");$("#content").innerHTML=`<div class="empty">${esc(e.message)}</div>`})
+  (map[r]||noaccess)().catch(e=>{toast(e.message,"error");const box=$("#content");if(box)box.innerHTML=`<div class="empty">${esc(e.message)}</div>`})
 }
 async function noaccess(){
   $("#content").innerHTML=head("帳戶已啟用","目前未獲分配任何功能權限")+"<div class=empty>請聯絡管理員設定身分或權限。</div>";
