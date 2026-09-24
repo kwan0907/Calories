@@ -167,16 +167,15 @@ async function pos(id){
     $$(".line-row",box).forEach(r=>{const i=+r.dataset.i;$(".lp",r).onchange=e=>{const p=ps.find(z=>z.id===e.target.value);lines[i].product_id=p.id;lines[i].unit_price_cents=+p.sale_price_cents||0;draw();calc()};$(".lq",r).oninput=e=>{lines[i].qty=+e.target.value||0;calc()};$(".lv",r).oninput=e=>{lines[i].unit_price_cents=cents(e.target.value);calc()};$(".remove",r).onclick=()=>{if(lines.length>1){lines.splice(i,1);draw();calc()}}})
   };
   const standardFee=+S.settings.customer_delivery_fee_cents||0,freeThreshold=+S.settings.free_shipping_threshold_cents||0,freeBasis=S.settings.free_shipping_basis==="subtotal"?"subtotal":"discounted";
-  let currentOff=0;
+  let currentOff=0,customDiscountMode=false;
   const currentSub=()=>lines.reduce((sum,x)=>sum+Math.round(x.qty*x.unit_price_cents),0);
-  if(id&&currentSub()>0){const inferred=(+o.discount_cents||0)/currentSub()*100;currentOff=[0,5,10,15,20].find(v=>Math.abs(v-inferred)<.05)??Math.max(0,Math.min(100,inferred))}
+  if(id&&currentSub()>0){const inferred=(+o.discount_cents||0)/currentSub()*100;const fixed=[0,5,10,15,20].find(v=>Math.abs(v-inferred)<.05);if(fixed===undefined){currentOff=Math.max(0,Math.min(100,inferred));customDiscountMode=true}else currentOff=fixed}
   const inferShipMode=()=>{if(!id)return"auto";const sub=currentSub(),disc=Math.round(sub*currentOff/100),base=freeBasis==="subtotal"?sub:Math.max(0,sub-disc),autoFee=freeThreshold>0&&base>=freeThreshold?0:standardFee,existing=+o.delivery_fee_cents||0;if(existing===autoFee)return"auto";if(existing===0)return"free";return"custom"};
   let shippingMode=inferShipMode();
   const syncDiscountUI=()=>{
-    const exact=[0,5,10,15,20].some(v=>Math.abs(v-currentOff)<.05);
-    $(".discount-pill").forEach(b=>b.classList.toggle("active",b.dataset.off==="custom"?!exact:+b.dataset.off===currentOff));
-    $("#customDiscountWrap").classList.toggle("is-hidden",exact);
-    $("#customDiscount").value=exact?"":num(currentOff);
+    $(".discount-pill").forEach(b=>b.classList.toggle("active",b.dataset.off==="custom"?customDiscountMode:(!customDiscountMode&&+b.dataset.off===currentOff)));
+    $("#customDiscountWrap").classList.toggle("is-hidden",!customDiscountMode);
+    if(customDiscountMode)$("#customDiscount").value=num(currentOff);
     $('[name="discount_percent"]').value=String(currentOff);
   };
   const syncShipUI=()=>{$(".ship-mode").forEach(b=>b.classList.toggle("active",b.dataset.mode===shippingMode));$('[name="shipping_mode"]').value=shippingMode;$("#customShippingWrap").classList.toggle("is-hidden",shippingMode!=="custom")};
@@ -189,8 +188,8 @@ async function pos(id){
       :shippingMode==="free"?"手動免運：客戶運費 $0；實際送貨成本仍會扣除":"使用自訂客戶運費";
     $("#totals").innerHTML=`<div class="total-row"><span>商品小計</span><b>${money(sub)}</b></div><div class="total-row"><span>折扣（${num(currentOff)}%）</span><b>-${money(disc)}</b></div><div class="total-row"><span>客戶運費</span><b>${money(df)}</b></div>${finance?`<div class="total-row"><span>商品成本</span><b>${money(cost)}</b></div><div class="total-row"><span>實際送貨成本</span><b>${money(dc)}</b></div>`:""}<div class="total-row grand"><span>應收總額</span><b>${money(total)}</b></div>${finance?`<div class="total-row profit"><span>此單淨利</span><b>${money(net)}</b></div>`:""}`;
   };
-  $(".discount-pill").forEach(b=>b.onclick=()=>{if(b.dataset.off==="custom"){$("#customDiscountWrap").classList.remove("is-hidden");currentOff=Math.max(0,Math.min(100,+$("#customDiscount").value||0))}else currentOff=+b.dataset.off;syncDiscountUI();calc()});
-  $("#customDiscount").oninput=e=>{currentOff=Math.max(0,Math.min(100,+e.target.value||0));$('[name="discount_percent"]').value=String(currentOff);calc()};
+  $(".discount-pill").forEach(b=>b.onclick=()=>{if(b.dataset.off==="custom"){customDiscountMode=true}else{customDiscountMode=false;currentOff=+b.dataset.off}syncDiscountUI();calc()});
+  $("#customDiscount").oninput=e=>{customDiscountMode=true;currentOff=Math.max(0,Math.min(100,+e.target.value||0));$('[name="discount_percent"]').value=String(currentOff);calc()};
   $(".ship-mode").forEach(b=>b.onclick=()=>{shippingMode=b.dataset.mode;syncShipUI();calc()});
   syncDiscountUI();syncShipUI();draw();calc();
   $("#addLine").onclick=()=>{lines.push({product_id:ps[0].id,qty:1,unit_price_cents:+ps[0].sale_price_cents||0});draw();calc()};
