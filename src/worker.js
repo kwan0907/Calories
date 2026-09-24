@@ -329,6 +329,7 @@ async function saveOrder(env,user,b,id){
   if(id&&!old)throw bad("找不到訂單",404);
   const oldItemsRes=id?await env.DB.prepare("SELECT * FROM order_items WHERE order_id=?").bind(id).all():{results:[]};
   const oldRows=oldItemsRes.results||[];
+  const customerWrites=[];
 
   let cid=b.customer_id||old?.customer_id||null;
   if(b.customer){
@@ -355,11 +356,11 @@ async function saveOrder(env,user,b,id){
           address:incoming.address||current.address||"",
           notes:incoming.notes==null?(current.notes||""):incoming.notes
         };
-        await env.DB.prepare("UPDATE customers SET name=?,phone=?,address=?,notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(x.name,x.phone,x.address,x.notes,current.id).run();
+        customerWrites.push(env.DB.prepare("UPDATE customers SET name=?,phone=?,address=?,notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(x.name,x.phone,x.address,x.notes,current.id));
         cid=current.id;
       }else{
         cid=crypto.randomUUID();
-        await env.DB.prepare("INSERT INTO customers(id,name,phone,address,notes) VALUES(?,?,?,?,?)").bind(cid,incoming.name||"散客",incoming.phone,incoming.address,incoming.notes||"").run();
+        customerWrites.push(env.DB.prepare("INSERT INTO customers(id,name,phone,address,notes) VALUES(?,?,?,?,?)").bind(cid,incoming.name||"散客",incoming.phone,incoming.address,incoming.notes||""));
       }
     }else cid=null;
   }
@@ -398,7 +399,7 @@ async function saveOrder(env,user,b,id){
   const dup=await env.DB.prepare("SELECT id FROM orders WHERE order_no=? AND id<>? LIMIT 1").bind(no,id||"").first();
   if(dup)throw bad("訂單編號已存在，請使用另一個編號");
 
-  const q=[];
+  const q=[...customerWrites];
   const orderId=id||crypto.randomUUID();
   if(id)q.push(env.DB.prepare(`UPDATE orders SET order_no=?,customer_id=?,order_date=?,delivery_date=?,delivery_slot=?,delivery_person=?,delivery_status=?,status=?,payment_status=?,payment_method=?,subtotal_cents=?,discount_cents=?,delivery_fee_cents=?,other_fee_cents=?,total_cents=?,paid_amount_cents=?,product_cost_cents=?,delivery_cost_cents=?,other_cost_cents=?,total_cost_cents=?,gross_profit_cents=?,net_profit_cents=?,notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`).bind(no,cid,od,s(b.delivery_date??old.delivery_date,10),s(b.delivery_slot??old.delivery_slot,80),s(b.delivery_person??old.delivery_person,80),ds,status,pay,s(b.payment_method??old.payment_method,50),subtotal,disc,df,of,total,paid,pcost,dc,oc,tcost,subtotal-disc-pcost,net,s(b.notes??old.notes,1000),id));
   else q.push(env.DB.prepare(`INSERT INTO orders(id,order_no,customer_id,order_date,delivery_date,delivery_slot,delivery_person,delivery_status,status,payment_status,payment_method,subtotal_cents,discount_cents,delivery_fee_cents,other_fee_cents,total_cents,paid_amount_cents,product_cost_cents,delivery_cost_cents,other_cost_cents,total_cost_cents,gross_profit_cents,net_profit_cents,notes,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(orderId,no,cid,od,s(b.delivery_date||"",10),s(b.delivery_slot||"",80),s(b.delivery_person||"",80),ds,status,pay,s(b.payment_method||"",50),subtotal,disc,df,of,total,paid,pcost,dc,oc,tcost,subtotal-disc-pcost,net,s(b.notes||"",1000),user.id));
