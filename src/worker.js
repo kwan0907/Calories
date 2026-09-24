@@ -247,8 +247,8 @@ async function api(req,env,u){
       await env.DB.prepare(`UPDATE users SET name=?,email=?,role=?,access_role=?,permissions_json=?,account_status=?,investor_id=?,is_active=?,reviewed_at=CURRENT_TIMESTAMP,reviewed_by=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
         .bind(name,email,legacy,access,JSON.stringify(perms),status,iid,active,user.id,id).run();
     }
-    if(!active) await env.DB.prepare("DELETE FROM sessions WHERE user_id=?").bind(id).run();
-    else if(newPassword&&id!==user.id) await env.DB.prepare("DELETE FROM sessions WHERE user_id=?").bind(id).run();
+    if(id!==user.id) await env.DB.prepare("DELETE FROM sessions WHERE user_id=?").bind(id).run();
+    else if(!active) await env.DB.prepare("DELETE FROM sessions WHERE user_id=?").bind(id).run();
     await audit(env,user.id,"REVIEW","user",id,{name:old.name,email:old.email,account_status:old.account_status,access_role:old.access_role},{name,email,account_status:status,access_role:access,permissions:perms,password_reset:!!newPassword});
     return j({ok:true});
   }
