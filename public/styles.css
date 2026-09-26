@@ -269,8 +269,8 @@ html,body,#app{max-width:100%;overflow-x:hidden}
 
 
 /* Native-like interaction polish */
-html{background:#090909;overscroll-behavior-y:contain}
-body{min-height:100dvh;overscroll-behavior-y:contain;-webkit-text-size-adjust:100%}
+html{background:#090909;overscroll-behavior-y:auto;overflow-y:auto}
+body{min-height:100dvh;overscroll-behavior-y:auto;-webkit-text-size-adjust:100%;overflow-y:visible;touch-action:pan-y}
 button,.btn,.nav button,.mobile-nav button,.more-grid button,.discount-pill,.ship-mode{
   -webkit-tap-highlight-color:transparent;touch-action:manipulation
 }
@@ -292,4 +292,17 @@ button:focus-visible,.btn:focus-visible{outline:2px solid var(--gold);outline-of
   .content{-webkit-overflow-scrolling:touch}
   .mobile-nav button,.more-grid button{min-height:56px}
   .btn{min-height:44px}
+}
+
+/* Android scroll safety */
+html,body,#app,.app-shell,.main,.content{touch-action:pan-y}
+html.nav-sheet-open,body.nav-sheet-open{overflow:hidden!important;touch-action:none}
+body:not(.nav-sheet-open){overflow-y:auto!important}
+@media(max-width:760px){
+  html,body{height:auto!important;min-height:100%;overflow-x:hidden;overflow-y:auto!important}
+  #app,.app-shell,.main{height:auto!important;min-height:100dvh;overflow:visible}
+  .content{height:auto!important;min-height:calc(100dvh - 70px);overflow-y:visible!important;touch-action:pan-y}
+  .mobile-head{touch-action:pan-y}
+  .mobile-nav{touch-action:manipulation}
+  .more-panel{overscroll-behavior:contain;touch-action:pan-y;-webkit-overflow-scrolling:touch}
 }
