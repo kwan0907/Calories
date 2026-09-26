@@ -7,7 +7,8 @@ const CACHE_TTL=15000,REQUEST_TIMEOUT=15000;
 if("scrollRestoration" in history)history.scrollRestoration="manual";
 const alive=view=>view===VIEW_ID&&!!$("#content");
 const currentRouteName=()=>((location.hash||"#/dashboard").replace(/^#\//,"").split("?")[0]||"dashboard");
-function navigate(r,opt={}){PENDING_TOP=opt.top!==false;const h="#/"+r;if(location.hash===h)route();else location.hash=h}
+function unlockPageScroll(){document.body.classList.remove("nav-sheet-open");document.documentElement.classList.remove("nav-sheet-open")}
+function navigate(r,opt={}){unlockPageScroll();PENDING_TOP=opt.top!==false;const h="#/"+r;if(location.hash===h)route();else location.hash=h}
 function setNetworkState(online=navigator.onLine){
   document.documentElement.classList.toggle("is-offline",!online);
   const el=$("#netState");if(!el)return;
@@ -110,9 +111,11 @@ window.addEventListener("offline",()=>{setNetworkState(false);toast("目前離�
 window.addEventListener("pageshow",e=>{setNetworkState();if(e.persisted&&S.user){markCacheStale();route()}});
 document.addEventListener("visibilitychange",()=>{
   if(document.hidden){HIDDEN_AT=Date.now();return}
-  setNetworkState();
+  unlockPageScroll();setNetworkState();
   if(S.user&&Date.now()-HIDDEN_AT>20000){markCacheStale();warmCommonData();route()}
 });
+window.addEventListener("focus",unlockPageScroll);
+window.addEventListener("pageshow",()=>unlockPageScroll());
 
 async function req(path,opt={}){
   const method=String(opt.method||"GET").toUpperCase(),isGet=method==="GET",key=cacheKey(path),useCache=isGet&&opt.cache!==false&&!path.startsWith("/api/auth/")&&!path.startsWith("/api/setup"),warmKey="warm:"+key,routeKey="route:"+key,flightKey=opt.noAbort?warmKey:routeKey;
@@ -196,6 +199,7 @@ function roleOf(){return S.user?.access_role||S.user?.role||"viewer"}
 function has(p){const r=roleOf(),a=S.user?.permissions||[];if(r==="admin"||a.includes("*")||a.includes(p))return true;return a.some(x=>(PERM_GRANTS[x]||[]).includes(p))}
 function homeRoute(){for(const [r,p] of [["dashboard","dashboard"],["orders","orders.read"],["products","products.read"],["reports","reports.read"],["users","accounts.manage"]])if(has(p))return r;return"noaccess"}
 function shell(){
+  unlockPageScroll();
   const nav=[
     ["dashboard","⌂","總覽",has("dashboard")],["pos","＋","POS 開單",has("orders.write")],["orders","▤","訂單",has("orders.read")],["delivery","🚚","送貨",has("delivery.read")&&has("orders.read")],
     ["customers","人","客戶",has("customers.read")],["products","盒","產品",has("products.read")],["expenses","$","支出",has("expenses.read")],["investors","%","投資者",has("investors.read")],
@@ -219,14 +223,15 @@ function shell(){
   [...document.querySelectorAll(".nav button,.mobile-nav button[data-r],.more-grid button[data-r]")].forEach(b=>{
     b.onclick=()=>go(b);b.addEventListener("pointerdown",()=>prefetchRoute(b.dataset.r),{passive:true})
   });
-  const openMore=()=>{$("#moreSheet").hidden=false;document.body.classList.add("nav-sheet-open")};
-  const closeMoreNav=()=>{const s=$("#moreSheet");if(s)s.hidden=true;document.body.classList.remove("nav-sheet-open")};
+  const openMore=()=>{const s=$("#moreSheet");if(!s)return;s.hidden=false;document.body.classList.add("nav-sheet-open")};
+  const closeMoreNav=()=>{const s=$("#moreSheet");if(s)s.hidden=true;unlockPageScroll()};
   $("#moreNav").onclick=openMore;$("#closeMore").onclick=closeMoreNav;$("#moreBackdrop").onclick=closeMoreNav;
   const logout=async()=>{try{await req("/api/auth/logout",{method:"POST"})}catch{}S.user=null;login()};
   $("#logout").onclick=logout;$("#mobileLogout").onclick=logout;
   setNetworkState();warmCommonData()
 }
 function route(){
+  unlockPageScroll();
   ROUTE_CONTROLLER?.abort();ROUTE_CONTROLLER=new AbortController();for(const k of [...API_INFLIGHT.keys()])if(k.startsWith("route:"))API_INFLIGHT.delete(k);
   if($("#modal"))closeModal();
   const nextHash=location.hash||"#/dashboard",currentY=window.scrollY||0,sameHash=nextHash===LAST_HASH;
