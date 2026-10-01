@@ -307,18 +307,22 @@ body:not(.nav-sheet-open){overflow-y:auto!important}
   .more-panel{overscroll-behavior:contain;touch-action:pan-y;-webkit-overflow-scrolling:touch}
 }
 
-.dashboard-monthbar{display:flex;align-items:end;gap:10px;margin:0 0 14px;flex-wrap:wrap}
-.month-picker{display:flex;flex-direction:column;gap:5px;min-width:190px}
+.dashboard-monthbar{display:grid;grid-template-columns:48px minmax(0,260px) 48px auto;align-items:end;gap:10px;margin:0 0 14px}
+.dashboard-monthbar>*{min-width:0}
+.month-picker{display:flex;flex-direction:column;gap:5px;min-width:0;width:100%;overflow:hidden}
 .month-picker label{font-size:11px;color:var(--muted);font-weight:800}
-.month-picker input{min-height:44px}
-.month-step{width:44px;min-width:44px;padding:0;font-size:25px;line-height:1}
+.month-picker input[type="month"]{display:block;width:100%;min-width:0;max-width:100%;height:46px;box-sizing:border-box;font-size:16px;text-align:center;-webkit-appearance:none;appearance:none}
+.month-step{width:48px;min-width:48px;height:46px;padding:0;font-size:25px;line-height:1}
 .dashboard-period-title{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:4px 2px 12px}
 .dashboard-period-title b{font-size:15px;color:var(--gold2)}
 .dashboard-period-title span{font-size:11px;color:var(--muted)}
 .dashboard-loading{min-height:140px}
 @media(max-width:760px){
-  .dashboard-monthbar{display:grid;grid-template-columns:44px minmax(0,1fr) 44px;gap:8px;align-items:end}
-  .dashboard-monthbar #monthCurrent{grid-column:1/-1;width:100%}
-  .month-picker{min-width:0;width:100%}
+  .dashboard-monthbar{grid-template-columns:48px minmax(0,1fr) 48px;gap:8px;align-items:end;width:100%;max-width:100%}
+  .dashboard-monthbar #monthCurrent{grid-column:1/-1;width:100%;height:44px}
+  .month-picker{min-width:0;width:100%;overflow:hidden}
+  .month-picker label{text-align:center;margin-bottom:2px}
+  .month-picker input[type="month"]{width:100%!important;min-width:0!important;max-width:100%!important;height:48px;padding:0 10px;font-size:17px;text-align:center}
+  .month-step{width:48px;min-width:48px;height:48px}
   .dashboard-period-title{align-items:flex-start;flex-direction:column;gap:3px}
 }
