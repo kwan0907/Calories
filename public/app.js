@@ -254,20 +254,50 @@ async function noaccess(view=VIEW_ID){if(!alive(view))return;
   $("#content").innerHTML=head("帳戶已啟用","目前未獲分配任何功能權限")+"<div class=empty>請聯絡管理員設定身分或權限。</div>";
 }
 async function dashboard(view=VIEW_ID){
-  const d=await req("/api/dashboard?today="+today()),finance=has("reports.read");if(!alive(view))return;
-  $("#content").innerHTML=head("總覽","今日及本月生意狀況")+`
-  <div class="grid cards">
-    ${metric("今日營業額",money(d.today.revenue_cents),d.today.order_count+" 張訂單","gold")}
-    ${finance?metric("今日淨利",money(d.today.net_profit_cents),"支出 "+money(d.today.expense_cents),"green"):""}
-    ${metric("本月營業額",money(d.month.revenue_cents),d.month.order_count+" 張訂單")}
-    ${finance?metric("本月淨利",money(d.month.net_profit_cents),"支出 "+money(d.month.expense_cents),"green"):""}
-    ${metric("今日未收",money(d.today.unpaid_cents),"應收未收","red")}
-    ${metric("本月未收",money(d.month.unpaid_cents),"應收未收","red")}
-    ${d.investor?metric("我的估算應佔 "+num(d.investor.percentage)+"%",money(d.investor.estimated_share_cents),d.investor.name,"gold"):""}
-  </div><div class="grid two" style="margin-top:14px">
-    <div class="card"><h3>本月熱賣</h3>${table(["產品","數量","銷售"],(d.top_products||[]).map(x=>[esc(x.name),num(x.qty),money(x.sales_cents)]))}</div>
-    <div class="card"><h3>即將送貨</h3>${table(["日期","訂單","狀態"],(d.deliveries||[]).map(x=>[esc(x.delivery_date||"-"),esc(x.order_no),badge(x.delivery_status)]))}</div>
-  </div>`
+  const finance=has("reports.read"),current=today().slice(0,7),saved=/^\d{4}-\d{2}$/.test(localStorage.getItem("crab_dashboard_month")||"")?localStorage.getItem("crab_dashboard_month"):current;
+  $("#content").innerHTML=head("總覽","今日及每月生意狀況")+`
+    <div class="dashboard-monthbar">
+      <button type="button" id="monthPrev" class="btn month-step" aria-label="上一個月">‹</button>
+      <div class="month-picker"><label>查看月份</label><input id="dashboardMonth" type="month" value="${attr(saved)}" max="${attr(current)}"></div>
+      <button type="button" id="monthNext" class="btn month-step" aria-label="下一個月">›</button>
+      <button type="button" id="monthCurrent" class="btn">本月</button>
+    </div>
+    <div id="dashboardBody">${skeletonHtml()}</div>`;
+  const monthInput=$("#dashboardMonth"),body=$("#dashboardBody"),prev=$("#monthPrev"),next=$("#monthNext"),currentBtn=$("#monthCurrent");
+  const labelFor=m=>{const [y,mm]=m.split("-").map(Number);return y+"年"+mm+"月"};
+  const shiftMonth=(m,delta)=>{const [y,mm]=m.split("-").map(Number),d=new Date(y,mm-1+delta,1);return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")};
+  const syncBtns=()=>{next.disabled=monthInput.value>=current;currentBtn.disabled=monthInput.value===current};
+  const render=async(month)=>{
+    if(!/^\d{4}-\d{2}$/.test(month))month=current;
+    if(month>current)month=current;
+    monthInput.value=month;localStorage.setItem("crab_dashboard_month",month);syncBtns();
+    body.classList.add("dashboard-loading");
+    try{
+      const d=await req("/api/dashboard?today="+today()+"&month="+encodeURIComponent(month),{fresh:true});
+      if(!alive(view)||!body?.isConnected)return;
+      const ml=labelFor(d.selected_month||month);
+      body.innerHTML=`
+      <div class="dashboard-period-title"><b>${esc(ml)}</b><span>${esc(d.month_start||"")} 至 ${esc(d.month_end||"")}</span></div>
+      <div class="grid cards">
+        ${metric("今日營業額",money(d.today.revenue_cents),d.today.order_count+" 張訂單","gold")}
+        ${finance?metric("今日淨利",money(d.today.net_profit_cents),"支出 "+money(d.today.expense_cents),"green"):""}
+        ${metric(ml+"營業額",money(d.month.revenue_cents),d.month.order_count+" 張訂單")}
+        ${finance?metric(ml+"淨利",money(d.month.net_profit_cents),"支出 "+money(d.month.expense_cents),"green"):""}
+        ${metric("今日未收",money(d.today.unpaid_cents),"應收未收","red")}
+        ${metric(ml+"未收",money(d.month.unpaid_cents),"應收未收","red")}
+        ${d.investor?metric("我的估算應佔 "+num(d.investor.percentage)+"%",money(d.investor.estimated_share_cents),ml+" · "+d.investor.name,"gold"):""}
+      </div><div class="grid two" style="margin-top:14px">
+        <div class="card"><h3>${esc(ml)}熱賣</h3>${table(["產品","數量","銷售"],(d.top_products||[]).map(x=>[esc(x.name),num(x.qty),money(x.sales_cents)]))}</div>
+        <div class="card"><h3>即將送貨</h3>${table(["日期","訂單","狀態"],(d.deliveries||[]).map(x=>[esc(x.delivery_date||"-"),esc(x.order_no),badge(x.delivery_status)]))}</div>
+      </div>`;
+    }catch(e){if(!isAbortError(e)&&alive(view))body.innerHTML=`<div class="empty error-state"><b>月份資料載入失敗</b><span>${esc(e.message)}</span></div>`}
+    finally{body?.classList.remove("dashboard-loading")}
+  };
+  prev.onclick=()=>render(shiftMonth(monthInput.value||current,-1));
+  next.onclick=()=>render(shiftMonth(monthInput.value||current,1));
+  currentBtn.onclick=()=>render(current);
+  monthInput.onchange=()=>render(monthInput.value||current);
+  syncBtns();await render(saved)
 }
 async function getProducts(all=false){const x=await req("/api/products"+(all?"?all=1":""));S.products=x.products||[];return S.products}
 async function pos(id,view=VIEW_ID){
