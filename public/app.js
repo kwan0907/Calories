@@ -392,7 +392,15 @@ async function pos(id,view=VIEW_ID){
 async function orders(view=VIEW_ID){
   if(!has("orders.read"))return navigate(homeRoute());
   const a=has("orders.write"),canDelete=has("orders.delete"),pii=has("customers.pii"),finance=has("reports.read"),canExport=has("export.orders");$("#content").innerHTML=head("訂單","搜尋、收款、利潤及送貨",a?'<button id="newO" class="btn primary">＋ 新訂單</button>':"")+`
-  <div class="filters"><input id="q" placeholder="${pii?"訂單 / 客戶 / 電話":"訂單編號"}"><input id="from" type="date"><input id="to" type="date"><select id="pay"><option value="">全部付款</option><option value="unpaid">未付款</option><option value="partial">部分付款</option><option value="paid">已付款</option></select><button id="go" class="btn">搜尋</button>${canExport?'<button id="csv" class="btn">CSV</button>':""}</div><div id="box" class="card"></div>`;
+  <div class="order-filters">
+    <div class="order-filter-search"><label for="q">搜尋訂單</label><input id="q" placeholder="${pii?"訂單 / 客戶 / 電話":"訂單編號"}"></div>
+    <div class="order-filter-dates">
+      <div class="order-filter-field"><label for="from">由日期</label><input id="from" type="date" aria-label="由日期"></div>
+      <div class="order-filter-field"><label for="to">至日期</label><input id="to" type="date" aria-label="至日期"></div>
+    </div>
+    <div class="order-filter-field"><label for="pay">付款狀態</label><select id="pay"><option value="">全部付款</option><option value="unpaid">未付款</option><option value="partial">部分付款</option><option value="paid">已付款</option></select></div>
+    <div class="order-filter-actions"><button id="go" class="btn primary">搜尋</button>${canExport?'<button id="csv" class="btn">CSV</button>':""}</div>
+  </div><div id="box" class="card"></div>`;
   if(a)$("#newO").onclick=()=>navigate("pos");
   const box=$("#box"),qEl=$("#q"),fromEl=$("#from"),toEl=$("#to"),payEl=$("#pay");
   const load=async()=>{if(!alive(view)||!box?.isConnected)return;const p=new URLSearchParams();[["q",qEl],["from",fromEl],["to",toEl]].forEach(([k,el])=>{if(el?.value)p.set(k,el.value)});if(payEl?.value)p.set("payment",payEl.value);const x=await req("/api/orders?"+p);if(!alive(view)||!box?.isConnected)return;const headers=["訂單","客戶","內容","總額","付款"],rows=(x.orders||[]).map(o=>[`<b>${esc(o.order_no)}</b><div class=muted>${esc(o.order_date)}</div>`,pii?`${esc(o.customer_name||"散客")}<div class=muted>${esc(o.customer_phone||"")}</div>`:"已隱藏客戶資料",esc(o.item_summary||""),money(o.total_cents),payBadge(o.payment_status)]);if(finance){headers.push("淨利");rows.forEach((r,i)=>{const o=x.orders[i];r.push(`<span class="${+o.net_profit_cents>=0?"positive":"negative"}">${money(o.net_profit_cents)}</span>`)})}headers.push("送貨","操作");rows.forEach((r,i)=>{const o=x.orders[i],actions=[a?`<button class="btn small edit" data-id="${o.id}">修改</button>`:"",canDelete?`<button class="btn small danger del-order" data-id="${o.id}">刪除</button>`:""].filter(Boolean).join(" ");r.push(`${badge(o.delivery_status)}<div class=muted>${esc(o.delivery_date||"")}</div>`,actions)});box.innerHTML=table(headers,rows);[...box.querySelectorAll(".edit")].forEach(b=>b.onclick=()=>navigate("pos?edit="+encodeURIComponent(b.dataset.id)));[...box.querySelectorAll(".del-order")].forEach(b=>b.onclick=()=>deleteOrderModal((x.orders||[]).find(o=>o.id===b.dataset.id),load))};
