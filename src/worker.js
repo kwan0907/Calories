@@ -81,23 +81,33 @@ async function api(req,env,u){
 
   if(p==="/api/dashboard"){
     need(user,"dashboard");
-    const today=s(u.searchParams.get("today")||dateNow(),10),start=today.slice(0,7)+"-01";
+    const today=s(u.searchParams.get("today")||dateNow(),10);
+    const currentMonth=today.slice(0,7);
+    let month=s(u.searchParams.get("month")||currentMonth,7);
+    if(!/^\d{4}-\d{2}$/.test(month))month=currentMonth;
+    const [yy,mmn]=month.split("-").map(Number);
+    if(!yy||mmn<1||mmn>12)month=currentMonth;
+    const [y,mn]=month.split("-").map(Number);
+    const start=month+"-01";
+    const lastDay=new Date(Date.UTC(y,mn,0)).toISOString().slice(0,10);
+    const end=month===currentMonth?today:lastDay;
     const [t,mo,te,me,top,del]=await Promise.all([
       env.DB.prepare(`SELECT COUNT(*) order_count,COALESCE(SUM(total_cents),0) revenue_cents,COALESCE(SUM(net_profit_cents),0) order_profit_cents,
         COALESCE(SUM(CASE WHEN total_cents>paid_amount_cents THEN total_cents-paid_amount_cents ELSE 0 END),0) unpaid_cents
         FROM orders WHERE deleted_at IS NULL AND order_date=? AND status IN ('confirmed','completed')`).bind(today).first(),
       env.DB.prepare(`SELECT COUNT(*) order_count,COALESCE(SUM(total_cents),0) revenue_cents,COALESCE(SUM(net_profit_cents),0) order_profit_cents,
         COALESCE(SUM(CASE WHEN total_cents>paid_amount_cents THEN total_cents-paid_amount_cents ELSE 0 END),0) unpaid_cents
-        FROM orders WHERE deleted_at IS NULL AND order_date BETWEEN ? AND ? AND status IN ('confirmed','completed')`).bind(start,today).first(),
+        FROM orders WHERE deleted_at IS NULL AND order_date BETWEEN ? AND ? AND status IN ('confirmed','completed')`).bind(start,end).first(),
       env.DB.prepare("SELECT COALESCE(SUM(amount_cents),0) n FROM expenses WHERE expense_date=?").bind(today).first(),
-      env.DB.prepare("SELECT COALESCE(SUM(amount_cents),0) n FROM expenses WHERE expense_date BETWEEN ? AND ?").bind(start,today).first(),
+      env.DB.prepare("SELECT COALESCE(SUM(amount_cents),0) n FROM expenses WHERE expense_date BETWEEN ? AND ?").bind(start,end).first(),
       env.DB.prepare(`SELECT oi.product_name_snapshot name,SUM(oi.qty) qty,SUM(oi.line_total_cents) sales_cents
         FROM order_items oi JOIN orders o ON o.id=oi.order_id WHERE o.deleted_at IS NULL AND o.order_date BETWEEN ? AND ? AND o.status IN ('confirmed','completed')
-        GROUP BY oi.product_name_snapshot ORDER BY sales_cents DESC LIMIT 5`).bind(start,today).all(),
+        GROUP BY oi.product_name_snapshot ORDER BY sales_cents DESC LIMIT 5`).bind(start,end).all(),
       env.DB.prepare(`SELECT id,order_no,delivery_date,delivery_slot,delivery_person,delivery_status,total_cents
         FROM orders WHERE deleted_at IS NULL AND delivery_date>=? AND status IN ('confirmed','completed') AND delivery_status!='已完成' ORDER BY delivery_date LIMIT 10`).bind(today).all()
     ]);
-    const out={ok:true,today:{...nums(t),expense_cents:+te.n||0,net_profit_cents:(+t.order_profit_cents||0)-(+te.n||0)},
+    const out={ok:true,selected_month:month,month_start:start,month_end:end,
+      today:{...nums(t),expense_cents:+te.n||0,net_profit_cents:(+t.order_profit_cents||0)-(+te.n||0)},
       month:{...nums(mo),expense_cents:+me.n||0,net_profit_cents:(+mo.order_profit_cents||0)-(+me.n||0)},
       top_products:top.results||[],deliveries:del.results||[]};
     const finance=can(user,"reports.read");
